@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Pickup Framework",
+	"Description": "Reusable world pickup layer that connects InteractionFramework with InventoryFramework.",
+	"Category": "Gameplay",
+	"CanContainContent": true,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"EnabledByDefault": false,
+	"Modules": [
+		{
+			"Name": "PickupFrameworkRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "InteractionFramework",
+			"Enabled": true
+		},
+		{
+			"Name": "InventoryFramework",
+			"Enabled": true
+		}
+	]
+}

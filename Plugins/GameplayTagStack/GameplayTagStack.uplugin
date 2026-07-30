@@ -1,0 +1,19 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "FriendlyName": "GameplayTag Stack",
+    "Description": "Stackable gameplay tag container with replication support (extracted from Lyra).",
+    "Category": "Gameplay",
+    "CanContainContent": false,
+    "IsExperimentalVersion": true,
+    "Installed": false,
+    "EnabledByDefault": false,
+    "Modules": [
+        {
+            "Name": "GameplayTagStack",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ]
+}

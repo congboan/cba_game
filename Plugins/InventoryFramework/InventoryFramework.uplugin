@@ -1,0 +1,41 @@
+{
+    "FileVersion":  3,
+    "Version":  1,
+    "VersionName":  "0.1.0",
+    "FriendlyName":  "Inventory Framework",
+    "Description":  "Reusable item definition, item instance, and replicated inventory container framework.",
+    "Category":  "Gameplay",
+    "CanContainContent":  true,
+    "IsExperimentalVersion":  true,
+    "Installed":  false,
+    "EnabledByDefault":  false,
+    "Modules":  [
+                    {
+                        "Name":  "InventoryFrameworkRuntime",
+                        "Type":  "Runtime",
+                        "LoadingPhase":  "Default"
+                    }
+                ],
+    "Plugins":  [
+                    {
+                        "Name":  "GameplayTagStack",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "GameplayAbilities",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "ModularGameplay",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "StructUtils",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "DataRegistry",
+                        "Enabled":  true
+                    }
+                ]
+}

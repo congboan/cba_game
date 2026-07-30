@@ -1,0 +1,20 @@
+## Unreal Engine
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+
+## IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+## Python
+__pycache__/
+*.pyc
+*.pyo
+
+## Build
+*.sln
+*.slnx

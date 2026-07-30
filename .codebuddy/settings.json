@@ -1,0 +1,62 @@
+{
+  "_comment": "WorkBuddy-only harness hooks. Settings provides one wildcard PreToolUse capture and routes every tool call exactly once to scope_guard. Valid new tool names enter the generic envelope; known built-ins use explicit adapters, and dynamic MCP/deferred tool semantics and capabilities come only from effective root/workflow/spec declarations. ToolSearch discovers availability but never authorizes. A successful harness evaluation abstains without permissionDecision:allow so WorkBuddy native permissions remain authoritative. Constraint hits or unresolved effects that may bypass a current effective deny block only the current call; malformed payloads, invalid task context, effective-host declaration failures, provider conflicts, field-mapping failures, and evaluator runtime failures terminate the AI task. Exact mutations of project settings or harness/scripts force per-call permissionDecision:ask. State and skill governance sources are always ask-protected; active specs and junction skill physical sources join that policy plane dynamically, while inactive specs remain writable. Built-in evaluators are closed harness mechanisms; the script evaluator may execute only an active root/workflow skill's owner-relative Python gate under the fixed exit protocol. Unresolved writes that might alter either plane deny the current call, and no repository maintenance flag can disable this protection. Plugin-owned development skills use the ordinary workflow selector. PreToolUse and Stop use a 60s client timeout; scope_guard owns a shared 45s evaluation budget and 15s report reserve. PostToolUse gives build_editor 1860s around its 1800s internal lifecycle budget; build state and process-tree cleanup remain owned by build_editor. Compilation is immediate feedback only; stop/commit correctness comes from build_freshness comparing the current UE compile-input fingerprint with the last successful build.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python harness/scripts/scope_guard.py --context",
+            "statusMessage": "Loading harness context",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python harness/scripts/resolve_engine.py --json",
+            "statusMessage": "Resolving engine path",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python harness/scripts/scope_guard.py --hook-stdin",
+            "statusMessage": "Checking harness effective constraints",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|replace_in_file|delete_files|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python harness/scripts/build_editor.py",
+            "statusMessage": "Compiling after edit",
+            "timeout": 1860
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python harness/scripts/scope_guard.py --event stop",
+            "statusMessage": "Checking build gate before stop",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

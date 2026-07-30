@@ -1,0 +1,29 @@
+{
+    "FileVersion":  3,
+    "Version":  1,
+    "VersionName":  "0.1.0",
+    "FriendlyName":  "Indicator System",
+    "Description":  "Reusable screen-space HUD indicator system for tracking actors (extracted from Lyra).",
+    "Category":  "UI",
+    "CanContainContent":  true,
+    "IsExperimentalVersion":  true,
+    "Installed":  false,
+    "EnabledByDefault":  false,
+    "Modules":  [
+                    {
+                        "Name":  "IndicatorSystem",
+                        "Type":  "Runtime",
+                        "LoadingPhase":  "Default"
+                    }
+                ],
+    "Plugins":  [
+                    {
+                        "Name":  "AsyncMixin",
+                        "Enabled":  true
+                    },
+                    {
+                        "Name":  "ModularGameplay",
+                        "Enabled":  true
+                    }
+                ]
+}
