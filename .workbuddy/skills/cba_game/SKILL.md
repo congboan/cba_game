@@ -336,10 +336,36 @@ ExperienceFramework 的 `.uplugin` / Runtime Module 依赖包括：`GameFeatures
 ```
 Human: "Add X feature"
     │
-    ├─ [Planner] AI 自主规划
-    │     ├─ 分析需求，确认 Spec 范围
-    │     ├─ 三层决策：代码放 Framework / Project Base / GameFeature
-    │     └─ 拆解为可并行/串行的子任务
+    ├─ [Planner] AI 自主规划（Design Playbook）
+    │     ├─ ① 模式选择（先问意图，19 模式中哪几个适用？）
+    │     │     TypeObject / Component / SubclassSandbox /
+    │     │     Observer / Command / State / ServiceLocator / ...
+    │     │
+    │     ├─ ② UE 实现映射（再选工具）
+    │     │     TypeObject → DataAsset/DataTable
+    │     │     Component → UActorComponent/UPawnComponent
+    │     │     SubclassSandbox → UGameplayAbility / Fragment 基类
+    │     │     Observer → Delegate / GameplayCue / 消息结构体
+    │     │     Command → UAbilityTask / GA 激活
+    │     │     State → StateTree / GameplayTag 状态机
+    │     │     ServiceLocator → GetSubsystem<T>()
+    │     │     Flyweight → 共享材质/InstancedStaticMesh
+    │     │     DoubleBuffer / GameLoop / UpdateMethod → 引擎已内置
+    │     │     ObjectPool → 极高频创建才手动池（UE GC 已管）
+    │     │
+    │     ├─ ③ 网络同步策略（涉及多人时必须）
+    │     │     FastArray → 大列表增量同步
+    │     │     Replicated UPROPERTY → 单个值/小结构
+    │     │     RPC → 一次性事件（不是持续状态）
+    │     │     DataRegistry → 解耦数据源与运行时实例
+    │     │
+    │     ├─ ④ SOLID 自检
+    │     │     单一职责 / Tag 替 bool / Subsystem 替 NewObject /
+    │     │     拆 UINTERFACE / GF 互不引用
+    │     │
+    │     ├─ ⑤ 三层放置：Framework / Project Base / GameFeature
+    │     │
+    │     └─ ⑥ 产出 spec + 子任务拆分（大功能拆为增量交付）
     │
     ├─ [Coder] 编码（子任务可各自并行）
     │     ├─ 写代码（16 条 harness 约束实时拦截）
@@ -432,3 +458,35 @@ Reviewer Agent 的审查依据。标注 [H] 的项目已被 harness 硬拦截，
 
 - [H] `.uasset` / `.umap` 不走文件工具直接编辑
 - [ ] 资产操作优先使用 ue5 MCP（`ToolSearch` 确认可用），不可用时引导 UE Editor
+
+### 设计模式（Design Patterns）
+
+检查是否使用了 UE 内置实现，而非自己造轮子：
+
+- [ ] TypeObject → DataAsset / DataTable，不硬编码枚举分支
+- [ ] Component → UActorComponent，行为不塞在 Actor 里
+- [ ] SubclassSandbox → Fragment 基类 + 虚函数，子类只填数据
+- [ ] Observer → Delegate / GameplayCue，不直接调用
+- [ ] ServiceLocator → GetSubsystem<T>()，不 NewObject 全局管理类
+- [ ] State → StateTree / GameplayTag 状态机，不用大 if-else
+- [ ] FastArray → 大列表增量同步，不手动 RPC 全量推送
+- [ ] DataRegistry → 数据源解耦，不硬编码 DataTable 路径
+
+### 代码质量（七维检查）
+
+- [ ] **可读性**：命名不撒谎、函数不超 40 行、注释解释「为什么」
+- [ ] **可测试性**：纯函数优于副作用、依赖注入优于内部 NewObject
+- [ ] **可变性**：数据驱动（不硬编码值）、条件分支不复制粘贴
+- [ ] **错误韧性**：`ensure()` vs `check()` 选对、异步有超时、网络有降级
+- [ ] **耦合度**：删一个类不牵连 5 个文件、模块间通过接口通信
+- [ ] **性能意识**：Tick() 无 O(n²)、不每帧 `GetAllActorsOfClass`、大对象不频繁创建
+- [ ] **一致性**：命名/错误处理/文件组织与已有代码风格统一
+
+### 反模式（必须标记）
+
+- [ ] `Tick()` 里有复杂逻辑 → 改用 Timer / Delegate
+- [ ] `Cast<T>()` 无检查 → 必须 `if (!Cast<T>(x)) return;`
+- [ ] 跨模块硬引用 → 用 `TSoftObjectPtr` / `TSoftClassPtr`
+- [ ] `Super::BeginPlay()` 等生命周期漏调
+- [ ] 多玩家逻辑的 `UPROPERTY` 未标记 `Replicated`
+- [ ] `UPROPERTY()` 空括号
