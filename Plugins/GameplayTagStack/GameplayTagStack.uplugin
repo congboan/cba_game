@@ -8,7 +8,6 @@
     "CanContainContent": false,
     "IsExperimentalVersion": true,
     "Installed": false,
-    "EnabledByDefault": false,
     "Modules": [
         {
             "Name": "GameplayTagStack",

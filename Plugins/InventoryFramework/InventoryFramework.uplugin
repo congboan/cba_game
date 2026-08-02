@@ -8,7 +8,6 @@
     "CanContainContent":  true,
     "IsExperimentalVersion":  true,
     "Installed":  false,
-    "EnabledByDefault":  false,
     "Modules":  [
                     {
                         "Name":  "InventoryFrameworkRuntime",
