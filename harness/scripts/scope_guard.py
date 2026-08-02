@@ -192,7 +192,13 @@ def _load_yaml_text(text: str):
     try:
         import yaml  # type: ignore
         return yaml.safe_load(text)
-    except Exception:
+    except ModuleNotFoundError:
+        return None
+    except Exception as exc:
+        print(
+            f"[scope_guard] YAML parse error: {exc}",
+            file=sys.stderr,
+        )
         return None
 
 
