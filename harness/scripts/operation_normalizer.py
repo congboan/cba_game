@@ -69,6 +69,17 @@ PYTHON_PROGRAMS = {
     "python3.exe",
 }
 
+PIP_PROGRAMS = {
+    "pip",
+    "pip.exe",
+    "pip3",
+    "pip3.exe",
+}
+
+_MANAGED_PYTHON_ENV = os.path.join(
+    os.path.expanduser("~"),
+    ".workbuddy", "binaries", "python", "envs", "default")
+
 POWERSHELL_WRITE_COMMANDS = {
     "add-content": "write",
     "clear-content": "write",
@@ -709,6 +720,19 @@ def _python_wrapper_analysis(tokens: list[str], *, tool_name: str,
         return None
     requests = [_request(
         "pre_command", tool_name=tool_name, command=command)]
+    if len(tokens) >= 3 and tokens[1] == "-m" and _program_name(tokens[2]) in PIP_PROGRAMS:
+        python_real = os.path.realpath(
+            tokens[0]
+            if os.path.isabs(tokens[0])
+            else os.path.join(cwd, tokens[0]))
+        if _is_managed_env_path(python_real):
+            return _analysis(
+                tool_name, "command", requests,
+                evidence=["no_modeled_effects:managed_pip"])
+        return _analysis(
+            tool_name, "command", requests,
+            ["pre_write"],
+            ["command_effects_unresolved:python_pip_module"])
     if len(tokens) < 2 or tokens[1].startswith("-"):
         return _analysis(
             tool_name, "command", requests,
@@ -727,6 +751,7 @@ def _python_wrapper_analysis(tokens: list[str], *, tool_name: str,
         for name in (
             "build_editor.py",
             "init_root_skill.py",
+            "launch_editor.py",
             "resolve_engine.py",
             "scope_guard.py",
         )
@@ -760,6 +785,37 @@ def _python_wrapper_analysis(tokens: list[str], *, tool_name: str,
     return _analysis(
         tool_name, "command", requests,
         evidence=[f"trusted_harness_wrapper:{wrapper}"])
+
+
+def _is_managed_env_path(absolute: str) -> bool:
+    return (
+        _MANAGED_PYTHON_ENV
+        and os.path.isfile(os.path.join(_MANAGED_PYTHON_ENV, "pyvenv.cfg"))
+        and os.path.normcase(os.path.realpath(absolute))
+        .startswith(os.path.normcase(os.path.realpath(_MANAGED_PYTHON_ENV)))
+    )
+
+
+def _pip_analysis(tokens: list[str], *, tool_name: str,
+                  command: str, cwd: str,
+                  repo_root: str) -> dict | None:
+    program = _program_name(tokens[0])
+    if program not in PIP_PROGRAMS:
+        return None
+    pip_real = os.path.realpath(
+        tokens[0]
+        if os.path.isabs(tokens[0])
+        else os.path.join(cwd, tokens[0]))
+    requests = [_request(
+        "pre_command", tool_name=tool_name, command=command)]
+    if _is_managed_env_path(pip_real):
+        return _analysis(
+            tool_name, "command", requests,
+            evidence=["no_modeled_effects:managed_pip"])
+    return _analysis(
+        tool_name, "command", requests,
+        ["pre_write"],
+        [f"command_effects_unresolved:{program}"])
 
 
 def _git_analysis(tokens: list[str], *, tool_name: str,
@@ -826,6 +882,12 @@ def _command_analysis(ctx: dict, repo_root: str) -> dict:
         tokens, tool_name=tool_name, command=command)
     if git_analysis:
         return git_analysis
+
+    pip_analysis = _pip_analysis(
+        tokens, tool_name=tool_name, command=command,
+        cwd=cwd, repo_root=repo_root)
+    if pip_analysis:
+        return pip_analysis
 
     if tool_name.lower() != "bash":
         powershell_analysis = _powershell_file_analysis(
