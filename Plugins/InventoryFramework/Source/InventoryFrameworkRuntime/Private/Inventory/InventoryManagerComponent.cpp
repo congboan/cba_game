@@ -102,7 +102,6 @@ UInventoryItemInstance* FInventoryList::AddEntry(const FDataRegistryId& ItemDefi
 	NotifyFragmentsOnCreate(NewEntry.Instance);
 
 	MarkItemDirty(NewEntry);
-	BroadcastChangeMessage(NewEntry, 0, NewEntry.StackCount);
 
 	return NewEntry.Instance;
 }
@@ -119,7 +118,6 @@ void FInventoryList::AddEntry(UInventoryItemInstance* Instance, int32 StackCount
 	NewEntry.StackCount = FMath::Max(1, StackCount);
 
 	MarkItemDirty(NewEntry);
-	BroadcastChangeMessage(NewEntry, 0, NewEntry.StackCount);
 }
 
 void FInventoryList::RemoveEntry(UInventoryItemInstance* Instance)
@@ -129,17 +127,10 @@ void FInventoryList::RemoveEntry(UInventoryItemInstance* Instance)
 		FInventoryEntry& Entry = *EntryIt;
 		if (Entry.Instance == Instance)
 		{
-			const int32 OldCount = Entry.StackCount;
-
 			NotifyFragmentsOnRemove(Instance);
 
 			EntryIt.RemoveCurrent();
 			MarkArrayDirty();
-
-			if (OwnerComponent != nullptr)
-			{
-				OwnerComponent->BroadcastInventoryChanged(Instance, 0, -OldCount);
-			}
 			return;
 		}
 	}
