@@ -172,6 +172,14 @@ constraints:
       timeout: 10
     action: deny
     reason: "UCLASS/USTRUCT/UENUM name must match UE prefix convention"
+  - id: project.governance.spec-required-for-code
+    evaluator: script
+    when: pre_write
+    data:
+      script: "checks/check_spec_required.py"
+      timeout: 10
+    action: deny
+    reason: "code write blocked: no active spec selected; build a spec first and activate it via state"
 ---
 
 # cba_game
