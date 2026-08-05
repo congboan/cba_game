@@ -228,3 +228,22 @@ python harness/scripts/launch_editor.py
 
 1. `python harness/scripts/build_editor.py`  → 编译
 2. `python harness/scripts/launch_editor.py` → 启动验证
+
+## WorkBuddy hook stdin JSON 截断规避（认知约束）
+
+WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会在约
+441-797 列截断，产生 `hook_payload.invalid_json` 与 `HARNESS_TASK_ABORT`。
+截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内修复；AI 必须
+认知规避，不得把 abort 误判为治理故障。
+
+**执行规范**：
+
+1. 长文件写入/编辑一律分段小操作，每段 payload 控制在约 200 字符内
+   （实测 Edit 的 old_string/new_string 合计超 700 字符即触发）。
+2. 命令行参数避免长中文内容（UTF-8 多字节加剧截断），如 git commit message
+   改用短 ASCII 或 `-F <file>` 从文件读。
+3. 触发 `invalid_json` abort 后：任务终止是协议要求，禁止降级放行、禁止换
+   未适配入口绕过；等待用户确认后重新发起（分段小写入即可正常完成）。
+
+**为什么**：hook stdin 是治理门禁信任边界（见 harness/decisions.md 对应 ADR）。
+该问题真实修复点在 WorkBuddy 客户端序列化，不在 harness 侧。

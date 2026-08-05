@@ -47,17 +47,59 @@ GIT_READ_SUBCOMMANDS = {
     "status",
 }
 
+# 只修改工作区之外状态的子命令：不产生现有 evaluator 关心的 repository
+# pre_write 证据。注意：不再包含 add/rm —— 它们写 .git/index 或工作区，
+# 必须解析目标路径产生精确 pre_write，否则会虚假放行删除文件等副作用。
 GIT_NON_WORKTREE_SUBCOMMANDS = {
-    "add",
     "branch",
     "fetch",
     "init",
     "pull",
     "push",
     "remote",
-    "reset",
-    "rm",
     "stash",
+}
+
+# 写工作区 / 索引的子命令：需要把文件路径参数解析为精确 pre_write 目标。
+GIT_WORKTREE_WRITE_SUBCOMMANDS = {
+    "add",
+    "commit",
+    "rm",
+    "restore",
+}
+
+# 无法静态证明只修改 .git 内部状态的子命令，保留 unresolved pre_write。
+GIT_WORKTREE_UNRESOLVED_SUBCOMMANDS = {
+    "checkout",
+    "clean",
+    "merge",
+    "mv",
+    "rebase",
+    "reset",
+    "switch",
+    "tag",
+}
+
+GIT_GLOBAL_OPTIONS = {
+    "-c",
+    "--bare",
+    "--exec-path",
+    "--git-dir",
+    "--glob-pathspecs",
+    "--icase-pathspecs",
+    "--literal-pathspecs",
+    "--no-optional-locks",
+    "--no-pager",
+    "--no-replace-objects",
+    "--paginate",
+    "--work-tree",
+}
+
+GIT_OPTION_ARGS = {
+    "-c",
+    "--exec-path",
+    "--git-dir",
+    "--work-tree",
 }
 
 PYTHON_PROGRAMS = {
@@ -819,14 +861,84 @@ def _pip_analysis(tokens: list[str], *, tool_name: str,
 
 
 def _git_analysis(tokens: list[str], *, tool_name: str,
-                  command: str) -> dict | None:
+                  command: str, cwd: str, repo_root: str) -> dict | None:
     if _program_name(tokens[0]) not in {"git", "git.exe"}:
         return None
     requests = [_request(
         "pre_command", tool_name=tool_name, command=command)]
     args = tokens[1:]
-    if args and args[0].lower() == "--no-pager":
-        args = args[1:]
+
+    # 全局选项：只有值形态（选项本身 / 选项=值）可静态识别；含未知选项或
+    # 需要带参选项的裸值形态无法证明仓库范围，保持 unresolved。
+    while args and args[0].startswith("-"):
+        option = args[0]
+        if option in GIT_OPTION_ARGS:
+            if len(args) < 2:
+                return _analysis(
+                    tool_name, "command", requests,
+                    ["pre_write", "pre_commit"],
+                    ["git_option_value_missing"])
+            args = args[2:]
+            continue
+        if option.startswith("-c"):
+            # 任意配置项，取值必须为 name=value 否则无法静态判定。
+            if len(args) < 2:
+                return _analysis(
+                    tool_name, "command", requests,
+                    ["pre_write", "pre_commit"],
+                    ["git_option_value_missing"])
+            config_value = args[1]
+            if "=" not in config_value:
+                return _analysis(
+                    tool_name, "command", requests,
+                    ["pre_write", "pre_commit"],
+                    ["git_config_unresolved"])
+            args = args[2:]
+            continue
+        if option == "-C":
+            if len(args) < 2:
+                return _analysis(
+                    tool_name, "command", requests,
+                    ["pre_write", "pre_commit"],
+                    ["git_option_value_missing"])
+            directory = args[1]
+            if not os.path.isabs(directory):
+                # 相对 -C 目录无法静态确认仓库根，保守 unresolved。
+                return _analysis(
+                    tool_name, "command", requests,
+                    ["pre_write", "pre_commit"],
+                    ["git_relative_c_unresolved"])
+            cwd = directory
+            args = args[2:]
+            continue
+        if option.startswith("-C="):
+            directory = option[len("-C="):]
+            if not os.path.isabs(directory):
+                return _analysis(
+                    tool_name, "command", requests,
+                    ["pre_write", "pre_commit"],
+                    ["git_relative_c_unresolved"])
+            cwd = directory
+            args = args[1:]
+            continue
+        if option.startswith("--"):
+            if "=" in option:
+                option = option.split("=", 1)[0]
+                if option in GIT_OPTION_ARGS:
+                    # --git-dir=/abs 等值形态可解析仓库范围。
+                    args = args[1:]
+                    continue
+            # 其余 -- 形态选项：未知值，无法证明是否改变仓库范围。
+            return _analysis(
+                tool_name, "command", requests,
+                ["pre_write", "pre_commit"],
+                ["git_global_option_unresolved"])
+        # 单短横选项（-p 等）：未知，保守 unresolved。
+        return _analysis(
+            tool_name, "command", requests,
+            ["pre_write", "pre_commit"],
+            ["git_short_option_unresolved"])
+
     if not args or args[0].startswith("-"):
         return _analysis(
             tool_name, "command", requests,
@@ -854,9 +966,106 @@ def _git_analysis(tokens: list[str], *, tool_name: str,
         return _analysis(
             tool_name, "command", requests,
             evidence=[f"git_non_worktree:{subcommand}"])
+    if subcommand in GIT_WORKTREE_WRITE_SUBCOMMANDS:
+        return _git_worktree_write_analysis(
+            tokens, subcommand=subcommand, args=args,
+            tool_name=tool_name, command=command,
+            cwd=cwd, repo_root=repo_root)
+    if subcommand in GIT_WORKTREE_UNRESOLVED_SUBCOMMANDS:
+        return _analysis(
+            tool_name, "command", requests,
+            ["pre_write"], [f"git_worktree_effects_unresolved:{subcommand}"])
     return _analysis(
         tool_name, "command", requests,
         ["pre_write"], [f"git_worktree_effects_unresolved:{subcommand}"])
+
+
+def _git_worktree_write_analysis(
+        tokens: list[str], *, subcommand: str, args: list[str],
+        tool_name: str, command: str,
+        cwd: str, repo_root: str) -> dict | None:
+    """把 git 写类子命令的文件参数解析为精确 pre_write 目标。
+
+    只把能够静态证明的路径参数派生为精确 pre_write；任何无法证明的参数
+    （选项、shell 通配、特殊形态）都保持 unresolved，绝不虚假放行。
+    """
+    requests = [_request(
+        "pre_command", tool_name=tool_name, command=command)]
+    if subcommand == "commit":
+        requests.append(_request(
+            "pre_commit", tool_name=tool_name, command=command))
+    write_paths: list[str] = []
+    unresolved_reason: str | None = None
+
+    positional: list[str] = []
+    saw_double_dash = False
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if not saw_double_dash and arg == "--":
+            saw_double_dash = True
+            index += 1
+            continue
+        if not saw_double_dash and arg.startswith("-"):
+            # 未知选项或带参选项：无法证明，保持 unresolved。
+            unresolved_reason = f"git_{subcommand}_option_unresolved:{arg}"
+            break
+        positional.append(arg)
+        index += 1
+
+    if unresolved_reason is None:
+        for raw in positional:
+            if not raw:
+                continue
+            if any(ch in raw for ch in "*?["):
+                unresolved_reason = "git_pathspec_glob_unresolved"
+                break
+            if subcommand == "add" and raw.startswith(":"):
+                unresolved_reason = "git_magic_pathspec_unresolved"
+                break
+            absolute = (
+                os.path.abspath(raw)
+                if os.path.isabs(raw)
+                else os.path.abspath(os.path.join(cwd, raw))
+            )
+            # 路径必须落在仓库内，否则无法被仓库级 evaluator 可信求值。
+            try:
+                inside = (os.path.commonpath(
+                    [os.path.normcase(os.path.normpath(repo_root)),
+                     os.path.normcase(os.path.normpath(absolute))])
+                    == os.path.normcase(os.path.normpath(repo_root)))
+            except ValueError:
+                inside = False
+            if not inside:
+                unresolved_reason = "git_path_outside_repo_unresolved"
+                break
+            write_paths.append(absolute)
+
+    if unresolved_reason is not None:
+        return _analysis(
+            tool_name, "command", requests,
+            ["pre_write"], [unresolved_reason])
+
+    if not write_paths:
+        # git add 无路径参数会暂存所有变更：完整工作区副作用。
+        if subcommand == "add":
+            write_paths.append(os.path.join(repo_root, "."))
+        else:
+            unresolved_reason = f"git_{subcommand}_no_paths_unresolved"
+
+    if unresolved_reason is not None:
+        return _analysis(
+            tool_name, "command", requests,
+            ["pre_write"], [unresolved_reason])
+
+    for path in write_paths:
+        requests.append(_request(
+            "pre_write", tool_name=tool_name, command=command,
+            path=path, path_scope="exact", operation="write",
+            confidence="partial"))
+    return _analysis(
+        tool_name, "command", requests,
+        evidence=[f"git_worktree_write:{subcommand}"])
 
 
 def _command_analysis(ctx: dict, repo_root: str) -> dict:
@@ -879,7 +1088,8 @@ def _command_analysis(ctx: dict, repo_root: str) -> dict:
         return python_analysis
 
     git_analysis = _git_analysis(
-        tokens, tool_name=tool_name, command=command)
+        tokens, tool_name=tool_name, command=command,
+        cwd=cwd, repo_root=repo_root)
     if git_analysis:
         return git_analysis
 

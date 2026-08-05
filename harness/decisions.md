@@ -6,6 +6,52 @@
 
 ---
 
+## 2026-08-05 · WorkBuddy hook stdin JSON 序列化截断是客户端协议边界
+
+**决策**：WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化
+会在约 441-797 列截断，产生 hook_payload.invalid_json 与 HARNESS_TASK_ABORT。
+截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内修复或规避。
+
+规避准则（认知约束，非机械门禁）：
+- 长文件写入/编辑用分段小操作，每段 payload 控制在约 200 字符内；
+- 命令行避免长中文参数（UTF-8 多字节加剧截断），改用短参数或从文件读；
+- 触发 invalid_json abort 后不得降级放行或换未适配入口绕过，按既有协议交回。
+
+**理由**：hook stdin 是治理门禁的信任边界（见 2026-07-23 协议错误 ADR）。
+客户端序列化截断属于公共 envelope 损坏，abort 语义正确且必须保留。
+真实修复点在 WorkBuddy 客户端的 stdin 序列化，不在 harness 侧。
+
+**边界**：本决策只记录协议边界与认知规避，不新增约束实例、不扩大白名单、
+不授权任何绕过入口。分段写入是任务执行规范（写入根 skill 认知区），不是
+harness 可以机械强制的门禁。
+
+---
+
+## 2026-08-05 · git 命令归一化改为精确副作用派生并支持 `-C`
+
+**决策**：`operation_normalizer.py` 的 `_git_analysis` 改为**按子命令精确派生副作用证据**。
+
+只读子命令（status/diff/log/ls-files/rev-parse/show）只产生 pre_command；
+写类子命令（add/rm/restore/commit）解析静态可证明的路径为精确 pre_write，
+无法证明的形态保持 unresolved；commit 仍恰好一次 pre_commit。
+
+远端/分支类（pull/push/fetch/branch/remote/init/stash）只产生 pre_command；
+无法证明目标集合的（checkout/switch/merge/rebase/reset/clean/mv/tag）保留
+unresolved pre_write；git -C 绝对路径解析为仓库根后走同一套归一化。
+
+GIT_NON_WORKTREE_SUBCOMMANDS 移除 add/rm（原被标无副作用放行，git rm 实际
+删除工作区文件，属虚假放行漏洞），reset 移入 unresolved 集合。
+
+理由：git add 被 unresolved 保守拒绝，同一机制又把 git rm 的删除副作用虚假
+放行——二元分类既过度拒绝又过度放行。按子命令精确派生让 git 写操作获得与
+Write/Edit 相同的保护语义。
+
+边界：只描述 git 语义证据归一化，不扩大白名单、不新增授权；git 写 .git/ 仍受
+OS 权限/沙箱约束，harness 不替代 OS 文件锁。未建模的合法新子命令保持
+unresolved，由真实需求驱动扩展。
+
+---
+
 ## 2026-07-28 · 递归目录删除使用精确 tree 副作用并复用现有 evaluator
 
 **决策**：`pre_write` 路径证据增加 `path_scope: exact|tree`。结构化删除的当前目标是普通目录，或

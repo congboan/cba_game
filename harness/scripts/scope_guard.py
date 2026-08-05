@@ -160,7 +160,11 @@ def _uproject_files() -> list[str]:
             name for name in os.listdir(REPO_ROOT)
             if name.lower().endswith(".uproject")
         )
-    except OSError:
+    except OSError as exc:
+        print(
+            f"[scope_guard] 无法枚举项目根目录 .uproject: {exc}",
+            file=sys.stderr,
+        )
         return []
 
 
@@ -193,6 +197,13 @@ def _load_yaml_text(text: str):
         import yaml  # type: ignore
         return yaml.safe_load(text)
     except ModuleNotFoundError:
+        if not getattr(_load_yaml_text, "_yaml_missing_reported", False):
+            print(
+                "[scope_guard] 缺少 PyYAML 依赖，无法解析 frontmatter；"
+                "请安装后重试: python -m pip install pyyaml",
+                file=sys.stderr,
+            )
+            _load_yaml_text._yaml_missing_reported = True
         return None
     except Exception as exc:
         print(
@@ -678,7 +689,11 @@ def _resolve_workflow_skill_reference(skill: str) -> tuple[str, str]:
             and os.path.isfile(os.path.join(
                 SKILLS_DIR, name, "SKILL.md"))
         )
-    except OSError:
+    except OSError as exc:
+        print(
+            f"[scope_guard] 无法枚举 workflow skill 发现目录: {exc}",
+            file=sys.stderr,
+        )
         discovered_names = []
 
     if normalized in discovered_names:
@@ -1118,7 +1133,12 @@ def _tool_governance_hosts(root_skill: dict) -> list[dict]:
             try:
                 with open(skill_md, "r", encoding="utf-8") as file:
                     frontmatter = _parse_frontmatter(file.read())
-            except OSError:
+            except OSError as exc:
+                print(
+                    f"[scope_guard] 无法读取 workflow skill frontmatter "
+                    f"{skill_md}: {exc}",
+                    file=sys.stderr,
+                )
                 continue
             if frontmatter:
                 hosts.append({
@@ -1138,7 +1158,12 @@ def _tool_governance_hosts(root_skill: dict) -> list[dict]:
             try:
                 with open(spec_path, "r", encoding="utf-8") as file:
                     frontmatter = _parse_frontmatter(file.read())
-            except OSError:
+            except OSError as exc:
+                print(
+                    f"[scope_guard] 无法读取 spec frontmatter "
+                    f"{spec_path}: {exc}",
+                    file=sys.stderr,
+                )
                 continue
             if frontmatter:
                 hosts.append({
@@ -1562,7 +1587,11 @@ def _task_context_repair_targets(
         try:
             script_path, _ = _owned_script_path(
                 inst, inst.get("data") or {}, require_exists=False)
-        except RuntimeError:
+        except RuntimeError as exc:
+            print(
+                f"[scope_guard] 无法解析 skill-owned 门禁脚本路径: {exc}",
+                file=sys.stderr,
+            )
             continue
         if os.path.isfile(script_path):
             continue

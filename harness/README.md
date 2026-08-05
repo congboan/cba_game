@@ -371,6 +371,13 @@ PreToolUse 与 Stop gate 使用两级时间预算：WorkBuddy 外层 timeout 为
      `operation: delete` 的精确 `pre_write` 复用现有 evaluator。后代遍历无法完成时保留 unresolved
      `pre_write`，不把目录路径本身误当成已经证明全部副作用；
    - `git commit` 补充 `pre_commit`；
+   - `git add / rm / restore` 等写类子命令解析静态可证明的路径参数为精确 `pre_write`
+     （`operation: write` + `path_scope: exact`），复用现有 evaluator 保护；无法静态证明的
+     参数/选项/仓库外路径保持 unresolved `pre_write`。`git -C <绝对路径>` 解析为仓库根后
+     走同一套归一化。只读子命令（`status / diff / log / ls-files / rev-parse / show`）只产生
+     `pre_command`；远端/分支类（`pull / push / fetch / branch / remote / init / stash`）同样
+     不产生 `pre_write`；无法证明目标集合的子命令（`checkout / switch / merge / rebase / reset /
+     clean / mv / tag`）保留 unresolved `pre_write`；
    - 每个工具调用都产生 `pre_tool` 并携带 provider capabilities；
    - 无法可信确定的潜在副作用记录为 unresolved event。
 4. scope_guard 只让当前任务的 effective root/workflow/spec deny 参与裁决。`script` 只在其
