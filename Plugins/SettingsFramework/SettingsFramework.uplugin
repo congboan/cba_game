@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"FriendlyName": "SettingsFramework",
+	"Version": 1,
+	"VersionName": "1.0",
+	"Description": "Data-driven settings system powered by MVVM. Generic, no project dependencies.",
+	"Category": "Framework",
+	"CreatedBy": "cba_game",
+	"EnabledByDefault": true,
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"Modules": [
+		{
+			"Name": "SettingsFrameworkRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
