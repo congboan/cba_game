@@ -191,10 +191,14 @@ TOOLS_WITH_NO_MODELED_EFFECTS = {
     "TaskGet",
     "TaskList",
     "TaskOutput",
+    "TaskCreate",
+    "TaskUpdate",
     "ToolSearch",
     "WaitForMcpServers",
     "WebFetch",
     "WebSearch",
+    "read_me",
+    "show_widget",
 }
 
 

@@ -258,3 +258,22 @@ WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会�
 
 **为什么**：hook stdin 是治理门禁信任边界（见 harness/decisions.md 对应 ADR）。
 该问题真实修复点在 WorkBuddy 客户端序列化，不在 harness 侧。
+
+## spec/state 激活规范（认知约束）
+
+`harness/state/harness_state.json` 的 `active_spec` 与 spec 文件有严格格式要求，
+不规范会产生 `activation.*` 诊断并 `HARNESS_TASK_ABORT`。本规范已在实践中踩坑
+（2026-08-06），AI 写入前必须遵守：
+
+1. **`active_spec` 必须是规范引用 `specs/<id>.md`**，不允许 basename 简写
+   （如 `settings-framework` 是错的，`specs/settings-framework.md` 才对）。
+2. **spec 的 `status` 只能是 `draft | confirmed | done`**（见
+   `harness/templates/spec.md` 注释）。新写 spec 默认 `draft`；只有
+   `status: confirmed` 才能被 `active_spec` 激活，`draft/done/缺失/非法值`
+   激活时都会终止任务。
+3. 激活顺序：先写 spec（`status: draft`）→ 预检
+   `scope_guard.py --preview-skills`（无依赖时用不带名称形式）→ 修改
+   `status: confirmed` → 写 `active_spec: "specs/<id>.md"` → 重新
+   `--context` 验证。
+4. 写 `specs/**` 前需激活 `governance-authoring`（见 AGENTS.md 治理任务
+   强制路由）；激活本身通过 state 写入，逐次人工确认。

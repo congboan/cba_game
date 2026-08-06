@@ -6,7 +6,23 @@
 
 ---
 
-## 2026-08-05 · WorkBuddy hook stdin JSON 序列化截断是客户端协议边界
+## 2026-08-06 · 纯渲染/任务管理工具补入无建模副作用集合
+
+**决策**：`operation_normalizer.py` 的 `TOOLS_WITH_NO_MODELED_EFFECTS` 补充
+`read_me`、`show_widget`、`TaskCreate`、`TaskUpdate`。
+
+**理由**：`read_me`/`show_widget` 是 WorkBuddy 纯渲染/内联可视化工具，只向
+会话流输出 SVG/HTML 片段，不写仓库文件、不执行命令、不触发 git；`TaskCreate`/
+`TaskUpdate` 只改会话内任务清单，与已收录的 TaskGet/TaskList 同类。此前它们
+因未被建模而被保守判为 unresolved pre_write，导致会话内无法使用可视化与任务
+管理，属于工具覆盖缺口而非安全风险。补入集合后仍产生 pre_tool，仍受动态
+tool capability 与 WorkBuddy 原生权限约束。
+
+**边界**：只扩展"该工具当前调用不产生现有 evaluator 关心的 repository 副作用"
+的静态集合；不新增授权、不扩大命令白名单。集合语义见注释（仍产生 pre_tool）。
+
+---
+
 
 **决策**：WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化
 会在约 441-797 列截断，产生 hook_payload.invalid_json 与 HARNESS_TASK_ABORT。
