@@ -4,13 +4,14 @@
 
 Purpose:
     Enforce the "start from a spec" workflow gate. When an AI attempts to write
-    to code paths (Source/**, Plugins/**) while harness_state.json has an empty
-    active_spec, the write is denied so the task must first go through spec
-    construction (and spec activation via state).
+    to code paths (configured via constraint data.code_paths) while
+    harness_state.json has an empty active_spec, the write is denied.
+
+Constraint data fields:
+    code_paths: list of glob patterns for code paths (default: ["Source/**", "Plugins/**"])
 
 Protocol:
-    stdin JSON (path, operation, content, ...); exit 0 = not hit,
-    exit 1 = hit, other = gate failure (task abort).
+    stdin JSON (path, data, ...); exit 0 = not hit, exit 1 = hit, other = gate failure.
 """
 from __future__ import annotations
 
@@ -20,37 +21,38 @@ import re
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# checks/ -> .workbuddy/skills/cba_game/ -> .workbuddy/skills/ -> .workbuddy/ -> repo root
 REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", ".."))
 STATE_FILE = os.path.join(REPO_ROOT, "harness", "state", "harness_state.json")
 
-# Code paths that require an active spec. Normalize to forward slashes for matching.
-_CODE_PATTERNS = (
-    re.compile(r"^Source/", re.IGNORECASE),
-    re.compile(r"^Plugins/", re.IGNORECASE),
-)
+_DEFAULT_CODE_PATHS = ("Source/**", "Plugins/**")
+
+
+def _compile_patterns(patterns):
+    result = []
+    for p in patterns:
+        rx = "^" + re.escape(str(p)).replace("\\*\\*", ".*?").replace("\\*", "[^/]*") + "$"
+        result.append(re.compile(rx, re.IGNORECASE))
+    return tuple(result)
 
 
 def _normalize(path: str) -> str:
     return path.replace("\\", "/").lstrip("/")
 
 
-def _is_code_path(path: str) -> bool:
+def _is_code_path(path: str, patterns) -> bool:
     norm = _normalize(path)
-    return any(pattern.match(norm) for pattern in _CODE_PATTERNS)
+    return any(p.match(norm) for p in patterns)
 
 
 def _read_active_spec() -> str | None:
-    """Return the active_spec value; None on unreadable/corrupt state (fail-open:
-    we cannot evaluate, so do not block writes -- state_field handles that case)."""
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+            state = json.load(handle)
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict):
+    if not isinstance(state, dict):
         return None
-    value = data.get("active_spec")
+    value = state.get("active_spec")
     return value if isinstance(value, str) else None
 
 
@@ -66,19 +68,23 @@ def main() -> int:
 
     path = payload.get("path")
     if not isinstance(path, str) or not path:
-        # No path evidence -> cannot evaluate; not a hit (abstain, let other gates run).
         return 0
 
-    if not _is_code_path(path):
+    constraint_data = payload.get("data")
+    if not isinstance(constraint_data, dict):
+        constraint_data = {}
+    raw_paths = constraint_data.get("code_paths", _DEFAULT_CODE_PATHS)
+    code_patterns = _compile_patterns(raw_paths)
+
+    if not _is_code_path(path, code_patterns):
         return 0
 
     active_spec = _read_active_spec()
     if active_spec is None:
-        # Cannot read state -> cannot prove the precondition; not a hit.
         return 0
 
     if not active_spec.strip():
-        print("code write blocked: no active spec selected (harness_state.active_spec is empty); build a spec first and activate it via state")
+        print("code write blocked: no active spec selected")
         return 1
 
     return 0

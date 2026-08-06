@@ -122,7 +122,7 @@ EVALUATOR_DATA_SCHEMA = {
     "require_active_skill": (
         {"skill", "path_patterns"},
         {"skill", "path_patterns", "exempt_patterns"}),
-    "script": ({"script"}, {"script", "timeout"}),
+    "script": ({"script"}, None),  # 允许约束声明任意自定义 data 字段透传给脚本
 }
 
 WORKBUDDY_TOOL_KINDS = {
@@ -793,6 +793,7 @@ def _script_public_context(ctx: dict) -> dict:
             "tool_provider_ids",
             "confidence",
             "event",
+            "data",
         )
     }
 
@@ -823,6 +824,8 @@ def _eval_script(data: dict, ctx: dict) -> str | None:
         if remaining <= 0:
             raise RuntimeError("执行 skill 门禁脚本前治理求值总预算已耗尽")
         timeout = min(float(timeout), remaining)
+
+    ctx["data"] = data  # 透传约束 data 给 skill 脚本（机制封闭、数据开放）
 
     payload = json.dumps(
         _script_public_context(ctx), ensure_ascii=False)
@@ -2042,7 +2045,7 @@ def validate_constraints(
 
         required, allowed = EVALUATOR_DATA_SCHEMA[evaluator]
         missing = sorted(required - set(data))
-        extra = sorted(set(data) - allowed)
+        extra = sorted(set(data) - allowed) if allowed is not None else []
         if missing:
             diagnostics.append(_diagnostic(
                 "error", "constraint.data_missing",

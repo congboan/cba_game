@@ -142,12 +142,21 @@ constraints:
       timeout: 10
     action: deny
     reason: "hardcoded engine path detected"
+  - id: project.engine.no-modify
+    evaluator: script
+    when: pre_write
+    data:
+      script: "checks/check_engine_write.py"
+      timeout: 10
+    action: deny
+    reason: "engine dir read-only"
   - id: project.arch.gf-location
     evaluator: script
     when: pre_write
     data:
       script: "checks/check_gf_location.py"
       timeout: 10
+      gf_root: ["Plugins", "GameFeatures"]
     action: deny
   - id: project.arch.gf-dependency
     evaluator: script
@@ -155,6 +164,7 @@ constraints:
     data:
       script: "checks/check_gf_dependency.py"
       timeout: 10
+      gf_root: ["Plugins", "GameFeatures"]
     action: deny
   - id: project.code.generated-include-last
     evaluator: script
@@ -178,6 +188,7 @@ constraints:
     data:
       script: "checks/check_spec_required.py"
       timeout: 10
+      code_paths: ["Source/**", "Plugins/**"]
     action: deny
     reason: "code write blocked: no active spec selected; build a spec first and activate it via state"
 ---

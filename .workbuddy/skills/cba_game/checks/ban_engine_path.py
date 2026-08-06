@@ -46,6 +46,11 @@ def main():
     if payload.get("operation") == "delete":
         return 0
 
+    # 豁免 .workbuddy/ 目录：治理配置/memory 中可合法引用引擎路径
+    path = payload.get("path", "")
+    if ".workbuddy/" in path.replace("\\", "/"):
+        return 0
+
     content = payload.get("content")
     if content is None:
         return 0

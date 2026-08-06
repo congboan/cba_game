@@ -1,15 +1,24 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Reject Framework Plugin .uplugin that depends on a GameFeature Plugin.
+
+Constraint data fields:
+    gf_root: list of path segments for GF root (default: ["Plugins", "GameFeatures"])
+
+Protocol:
+    stdin JSON (path, content, data, ...); exit 0 = not hit, exit 1 = hit,
+    exit 2 = gate failure (task abort).
+"""
+from __future__ import annotations
+
 import json
 import os
 import sys
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", ".."))
 
-def derive_repo_root():
-    return os.path.normpath(os.path.join(os.getcwd(), "..", "..", ".."))
-
-
-def protocol_error(message):
-    print(message, file=sys.stderr)
-    return 2
+_DEFAULT_GF_ROOT = ("Plugins", "GameFeatures")
 
 
 def normalize_path(path):
@@ -19,34 +28,10 @@ def normalize_path(path):
     return normalized
 
 
-def load_context():
-    try:
-        ctx = json.load(sys.stdin)
-    except (TypeError, ValueError) as error:
-        raise RuntimeError(f"gate input is not valid JSON: {error}") from error
-    if not isinstance(ctx, dict):
-        raise RuntimeError("gate input root must be an object")
-
-    path = ctx.get("path")
-    if not isinstance(path, str):
-        raise RuntimeError("gate input path must be a string")
-    content = ctx.get("content")
-    if content is not None and not isinstance(content, str):
-        raise RuntimeError("gate input content must be a string or null")
-    operation = ctx.get("operation")
-    if operation is not None and not isinstance(operation, str):
-        raise RuntimeError("gate input operation must be a string or null")
-    source_tool = ctx.get("source_tool")
-    if source_tool is not None and not isinstance(source_tool, str):
-        raise RuntimeError("gate input source_tool must be a string or null")
-    return ctx
-
-
 def read_existing_descriptor(norm):
-    repo_root = os.path.realpath(derive_repo_root())
-    file_path = os.path.realpath(os.path.join(repo_root, norm))
+    file_path = os.path.realpath(os.path.join(REPO_ROOT, norm))
     try:
-        if os.path.commonpath((repo_root, file_path)) != repo_root:
+        if os.path.commonpath((REPO_ROOT, file_path)) != REPO_ROOT:
             return None, "descriptor path escapes the repository"
     except ValueError:
         return None, "descriptor path cannot be resolved inside the repository"
@@ -64,7 +49,7 @@ def candidate_descriptor(ctx, norm):
             data = json.loads(content)
         except (TypeError, ValueError) as error:
             return None, (
-                "cannot prove the resulting .uplugin from partial or invalid JSON; "
+                "cannot prove the resulting .uplugin from partial JSON; "
                 f"use a full-descriptor write ({error})")
     elif not ctx.get("source_tool"):
         data, error = read_existing_descriptor(norm)
@@ -72,9 +57,8 @@ def candidate_descriptor(ctx, norm):
             return None, error
     else:
         return None, (
-            "cannot prove the resulting .uplugin because this mutation did not "
-            "provide complete descriptor content")
-
+            "cannot prove the resulting .uplugin because this mutation "
+            "did not provide complete descriptor content")
     if not isinstance(data, dict):
         return None, ".uplugin descriptor root must be an object"
     return data, ""
@@ -83,51 +67,68 @@ def candidate_descriptor(ctx, norm):
 def game_feature_plugin_names(gf_dir):
     names = set()
     try:
-        entries = list(os.scandir(gf_dir))
+        for entry in os.scandir(gf_dir):
+            if not entry.is_dir():
+                continue
+            try:
+                children = list(os.scandir(entry.path))
+            except OSError as error:
+                raise RuntimeError(
+                    f"cannot inspect GameFeature directory {entry.path}: {error}"
+                ) from error
+            for child in children:
+                if child.is_file() and child.name.lower().endswith(".uplugin"):
+                    names.add(os.path.splitext(child.name)[0].casefold())
     except OSError as error:
         raise RuntimeError(
-            f"cannot inspect Plugins/GameFeatures: {error}") from error
-
-    for entry in entries:
-        if not entry.is_dir():
-            continue
-        try:
-            children = list(os.scandir(entry.path))
-        except OSError as error:
-            raise RuntimeError(
-                f"cannot inspect GameFeature directory {entry.path}: {error}") from error
-        for child in children:
-            if child.is_file() and child.name.lower().endswith(".uplugin"):
-                names.add(os.path.splitext(child.name)[0].casefold())
+            f"cannot inspect GF root: {error}") from error
     return names
+
+
+def _parts_match(parts, root_segments):
+    """Check if path segments start with the configured root segments."""
+    if len(parts) < len(root_segments):
+        return False
+    return all(
+        parts[i].casefold() == root_segments[i].casefold()
+        for i in range(len(root_segments))
+    )
 
 
 def main():
     try:
-        ctx = load_context()
-    except RuntimeError as error:
-        return protocol_error(str(error))
+        payload = json.loads(sys.stdin.read() or "{}")
+    except (TypeError, ValueError) as error:
+        print("gate input not valid JSON: " + str(error), file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("gate input root must be object", file=sys.stderr)
+        return 2
 
-    path = ctx.get("path", "")
+    path = payload.get("path", "")
     if not path.lower().endswith(".uplugin"):
         return 0
 
+    constraint_data = payload.get("data")
+    if not isinstance(constraint_data, dict):
+        constraint_data = {}
+    gf_root = tuple(str(s) for s in constraint_data.get("gf_root", _DEFAULT_GF_ROOT))
+
     norm = normalize_path(path)
     parts = norm.split("/")
-    is_framework_descriptor = (
-        len(parts) >= 3
-        and parts[0].casefold() == "plugins"
-        and parts[1].casefold() != "gamefeatures"
-    )
-    if not is_framework_descriptor or ctx.get("operation") == "delete":
+
+    # Framework = under the plugins root but NOT under GF root
+    plugins_root = gf_root[:1]  # first segment, e.g. ("Plugins",)
+    is_framework = _parts_match(parts, plugins_root) and not _parts_match(parts, gf_root)
+
+    if not is_framework or payload.get("operation") == "delete":
         return 0
 
-    repo_root = derive_repo_root()
-    gf_dir = os.path.join(repo_root, "Plugins", "GameFeatures")
+    gf_dir = os.path.join(REPO_ROOT, *gf_root)
     if not os.path.isdir(gf_dir):
         return 0
 
-    data, error = candidate_descriptor(ctx, norm)
+    data, error = candidate_descriptor(payload, norm)
     if error:
         print(error)
         return 1
@@ -142,7 +143,8 @@ def main():
     try:
         gf_names = game_feature_plugin_names(gf_dir)
     except RuntimeError as error:
-        return protocol_error(str(error))
+        print(str(error), file=sys.stderr)
+        return 2
 
     for dep in deps:
         if not isinstance(dep, dict):
