@@ -346,6 +346,8 @@ def main() -> int:
     if build_failed:
         print(f"[FAIL] Build failed.")
         print(f"Full log: {log_path}" if log_path else "(log not saved)")
+        if "Live Coding" in all_output or "Hot-reloadable" in all_output:
+            print("[TIP] Live Coding 激活：请先完全退出 UE 编辑器后重试编译")
         _record_failure_state(exit_code if exit_code != 0 else 1)
         return 1
 

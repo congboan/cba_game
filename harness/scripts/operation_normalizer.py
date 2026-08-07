@@ -70,6 +70,7 @@ GIT_STAGING_SUBCOMMANDS = {
 
 # 写工作区 / 索引的子命令：需要把文件路径参数解析为精确 pre_write 目标。
 GIT_WORKTREE_WRITE_SUBCOMMANDS = {
+    "checkout",
     "commit",
     "rm",
     "restore",
@@ -77,7 +78,6 @@ GIT_WORKTREE_WRITE_SUBCOMMANDS = {
 
 # 无法静态证明只修改 .git 内部状态的子命令，保留 unresolved pre_write。
 GIT_WORKTREE_UNRESOLVED_SUBCOMMANDS = {
-    "checkout",
     "clean",
     "merge",
     "mv",

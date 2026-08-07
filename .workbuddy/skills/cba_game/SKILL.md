@@ -213,6 +213,19 @@ harness 的 `operation_normalizer.py` 只能静态解析**纯命令**。复合�
 
 **Rider / IDE 集成说明**：Rider 加载项目时若检测到源码晚于上次成功编译（`Saved/harness_last_build.json` 指纹不匹配），会提示需要 build——这是 `build_freshness` 的同一保护逻辑在 IDE 侧生效，属正常行为。源码变更后重新编译即可消除。
 
+## .workbuddy 工作区保护（2026-08-07 事故教训）
+
+- `.workbuddy/`（memory/skills）在 git add/commit 后曾整体消失，靠 `git restore` 救回，根因未完全定位（疑与 Windows junction 处理有关）。
+- **禁止**对 `.workbuddy/` 执行破坏性 git 操作：`git clean`、`git checkout -- .workbuddy`（除非明确要恢复）、`git reset --hard` 等；优先用 `git restore <具体文件>` 精确恢复。
+- 涉及 `.workbuddy/` 的 `git add -A` / commit 前，先 `git status --short` 审查改动清单，确认没有意外删除/替换。
+- 若 root skill 再次 missing，按 `harness/README.md` 恢复协议：`git ls-files .workbuddy/` 确认索引完整 → `git restore .workbuddy/` 恢复 → `scope_guard.py --context` 验证。
+
+## 编辑载荷规避（WorkBuddy hook JSON 截断）
+
+- WorkBuddy hook 通道对较大载荷偶发截断（`hook_payload.invalid_json` / gate input 截断），直接导致任务 abort。
+- **改文件用小步 Edit**（每次改动控制在几十行内），大文件整体改写用 Write 全量一次完成；避免单次 Edit 携带大段文本。
+- 对 `harness/scripts/scope_guard.py` 等关键文件的修改若持续截断，需终端手动改或等客户端修复，不要反复重试。
+
 ## 编辑器启动验证
 
 `build_editor.py` 只验证 C++ 编译通过（UBT 无错误）。编译成功后编辑器仍可能因以下原因启动失败：

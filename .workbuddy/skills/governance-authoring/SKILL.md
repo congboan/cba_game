@@ -117,3 +117,9 @@ root/workflow skill 的 `checks/` 中，通过 `script` evaluator 调用；脚�
 - 不在归属不清时默认写入根 skill 或 harness。
 - 不把 ToolSearch 结果、MCP 名称、plugin 存在或 provider 声明本身当作授权。
 - 不让 spec 直接携带可执行门禁，也不让 skill 脚本越出其物理宿主目录。
+
+## Skill-owned 门禁脚本编写规范
+
+- 第三方 import 全部放函数内（模块级 import 崩溃→exit 1 被误判命中→全量锁死，2026-08-07 事故）
+- main() 用 try/except 包住，未知异常打印 traceback 并 return 2
+- 退出码协议：0=未命中、1=命中、2=故障；json.loads 失败 return 2（客户端载荷可能截断）
