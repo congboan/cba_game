@@ -151,6 +151,7 @@ WORKBUDDY_ADAPTER_STATUS = {
 # 它不进入正常工具语义，也不授权其他 generic 工具。
 WORKBUDDY_RECOVERY_READ_FIELDS = {
     "Read": ("file_path",),
+    "Glob": ("path",),
 }
 
 def _uproject_files() -> list[str]:
@@ -854,6 +855,8 @@ def _eval_script(data: dict, ctx: dict) -> str | None:
     if completed.returncode == 0:
         return None
     if completed.returncode == 1:
+        if "Traceback" in stderr or "Traceback" in stdout:
+            raise RuntimeError("skill 门禁脚本崩溃（traceback）")
         return stdout or "skill 门禁脚本命中"
     detail = "; ".join(
         value for value in (
