@@ -15,7 +15,6 @@ public class SettingsFrameworkRuntime : ModuleRules
 			"Engine",
 			"GameplayTags",
 			"ModelViewViewModel",
-			"PropertyPath",
 			"UMG",
 			"CommonUI",
 			"CommonGame",

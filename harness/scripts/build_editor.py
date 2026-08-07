@@ -94,7 +94,7 @@ def _remaining_seconds(deadline_monotonic: float) -> float:
 
 def find_engine() -> str | None:
     from resolve_engine import resolve_engine
-    return resolve_engine()
+    return resolve_engine(allow_env=True)
 
 
 def find_uproject() -> str | None:
@@ -286,7 +286,7 @@ def main() -> int:
     print(f"Budget:  {BUILD_TOTAL_BUDGET_SECONDS}s internal + {BUILD_REPORT_RESERVE_SECONDS}s reserve\n")
 
     args = [ubt, target, PLATFORM, CONFIG,
-            f"-Project={uproject}", "-WaitMutex", "-FromMsBuild", "-architecture=x64"]
+            f"-Project={uproject}", "-WaitMutex", "-NoHotReload", "-architecture=x64"]
     print("Running: UnrealBuildTool " + " ".join(
         os.path.basename(a) if i == 0 else a for i, a in enumerate(args)))
     print()

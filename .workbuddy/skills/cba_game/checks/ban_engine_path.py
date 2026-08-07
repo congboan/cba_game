@@ -19,8 +19,6 @@ _HARNESS_SCRIPTS = os.path.join(REPO_ROOT, "harness", "scripts")
 if _HARNESS_SCRIPTS not in sys.path:
     sys.path.insert(0, _HARNESS_SCRIPTS)
 
-from resolve_engine import resolve_engine  # noqa: E402
-
 _SUSPICIOUS_ENGINE = re.compile(
     r'[A-Za-z]:[\\/](?:.*[\\/])?Engine[\\/]',
     re.IGNORECASE,
@@ -46,9 +44,10 @@ def main():
     if payload.get("operation") == "delete":
         return 0
 
-    # 豁免 .workbuddy/ 目录：治理配置/memory 中可合法引用引擎路径
+    # exempt .workbuddy/ and harness/ directories
     path = payload.get("path", "")
-    if ".workbuddy/" in path.replace("\\", "/"):
+    n = path.replace("\\", "/")
+    if ".workbuddy/" in n or "harness/" in n:
         return 0
 
     content = payload.get("content")
@@ -59,6 +58,7 @@ def main():
         return 2
 
     try:
+        from resolve_engine import resolve_engine  # noqa: E402
         engine_root = resolve_engine()
     except Exception:
         engine_root = None

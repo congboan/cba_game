@@ -9,6 +9,11 @@
 	"EnabledByDefault": true,
 	"CanContainContent": true,
 	"IsBetaVersion": false,
+	"Plugins": [
+		{ "Name": "ModelViewViewModel", "Enabled": true },
+		{ "Name": "CommonUI", "Enabled": true },
+		{ "Name": "CommonGame", "Enabled": true }
+	],
 	"Modules": [
 		{
 			"Name": "SettingsFrameworkRuntime",

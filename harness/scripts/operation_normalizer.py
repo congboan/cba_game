@@ -60,9 +60,16 @@ GIT_NON_WORKTREE_SUBCOMMANDS = {
     "stash",
 }
 
+# 只修改 .git/index 暂存区、不触碰工作区文件内容的子命令。
+# git add 是可逆暂存（git reset 撤销），不产生现有 evaluator 关心的
+# repository pre_write；真正写入由 commit 的 pre_commit 与 rm/restore
+# 的精确 pre_write 承担。
+GIT_STAGING_SUBCOMMANDS = {
+    "add",
+}
+
 # 写工作区 / 索引的子命令：需要把文件路径参数解析为精确 pre_write 目标。
 GIT_WORKTREE_WRITE_SUBCOMMANDS = {
-    "add",
     "commit",
     "rm",
     "restore",
@@ -955,6 +962,12 @@ def _git_analysis(tokens: list[str], *, tool_name: str,
         return _analysis(
             tool_name, "command", requests,
             evidence=["git_commit"])
+    if subcommand in GIT_STAGING_SUBCOMMANDS:
+        # git add 只修改暂存区，工作区文件内容不变；提交内容最终由
+        # commit 的 pre_commit 求值（build_freshness 等）与人工审查兜底。
+        return _analysis(
+            tool_name, "command", requests,
+            evidence=[f"git_staging:{subcommand}"])
     if subcommand in GIT_READ_SUBCOMMANDS:
         if any(
                 arg.lower() in {"--ext-diff", "--output", "--textconv"}

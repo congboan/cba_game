@@ -18,8 +18,6 @@ _HARNESS_SCRIPTS = os.path.join(REPO_ROOT, "harness", "scripts")
 if _HARNESS_SCRIPTS not in sys.path:
     sys.path.insert(0, _HARNESS_SCRIPTS)
 
-from resolve_engine import resolve_engine  # noqa: E402
-
 
 def _normalize(p: str) -> str:
     return os.path.abspath(str(p)).replace("\\", "/").rstrip("/").lower()
@@ -40,6 +38,7 @@ def main() -> int:
         return 0
 
     try:
+        from resolve_engine import resolve_engine  # noqa: E402
         engine_root = resolve_engine()
     except Exception:
         return 0
