@@ -18,6 +18,7 @@ public:
 	virtual void StoreInitial() override;
 	virtual void ResetToDefault() override;
 	virtual void RestoreToInitial() override;
+	virtual void GetValueFromHost() override;
 
 protected:
 	bool bInitialValue = false;

@@ -5,43 +5,119 @@
 #include "ViewModels/SettingEnumViewModel.h"
 #include "ViewModels/SettingActionViewModel.h"
 #include "ViewModels/SettingPageViewModel.h"
+#include "ViewModels/SettingValueDiscrete.h"
+
+void USettingRegistry::RegisterViewModelClass(ESettingValueType ValueType, TSubclassOf<USettingViewModelBase> ViewModelClass)
+{
+	if (ViewModelClass)
+	{
+		RegisteredViewModelClasses.Add(ValueType, ViewModelClass);
+	}
+}
+
+TSubclassOf<USettingViewModelBase> USettingRegistry::GetViewModelClassForType(ESettingValueType ValueType) const
+{
+	const TSubclassOf<USettingViewModelBase>* Found = RegisteredViewModelClasses.Find(ValueType);
+	return Found ? *Found : nullptr;
+}
+
+USettingViewModelBase* USettingRegistry::CreateViewModelForEntry(USettingEntry* Entry, UObject* InHost)
+{
+	if (!Entry) return nullptr;
+
+	USettingViewModelBase* VM = nullptr;
+	if (TSubclassOf<USettingViewModelBase> CustomClass = GetViewModelClassForType(Entry->ValueType))
+	{
+		VM = NewObject<USettingViewModelBase>(this, CustomClass);
+	}
+	else
+	{
+		switch (Entry->ValueType)
+		{
+		case ESettingValueType::Scalar: VM = NewObject<USettingScalarViewModel>(this); break;
+		case ESettingValueType::Bool: VM = NewObject<USettingBoolViewModel>(this); break;
+		case ESettingValueType::Enum: VM = NewObject<USettingEnumViewModel>(this); break;
+		case ESettingValueType::Action: VM = NewObject<USettingActionViewModel>(this); break;
+		case ESettingValueType::Page: VM = NewObject<USettingPageViewModel>(this); break;
+		case ESettingValueType::Group: VM = NewObject<USettingPageViewModel>(this); break;
+		default: return nullptr;
+		}
+	}
+
+	if (VM)
+	{
+		VM->Initialize(Entry, InHost);
+		VM->SetSelectable(Entry->ValueType == ESettingValueType::Page);
+	}
+	return VM;
+}
+
+UObject* USettingRegistry::ResolveHost(UClass* InHostClass, UObject* InHost) const
+{
+	if (InHost) return InHost;
+	if (!InHostClass) return nullptr;
+
+	// 反射查找静态 Get()
+	UFunction* GetFn = InHostClass->FindFunctionByName(TEXT("Get"));
+	if (GetFn && GetFn->HasAnyFunctionFlags(FUNC_Static) && GetFn->NumParms == 1)
+	{
+		UObject* Instance = nullptr;
+		InHostClass->ProcessEvent(GetFn, &Instance);
+		if (Instance) return Instance;
+	}
+	return nullptr;
+}
 
 void USettingRegistry::LoadCollection(USettingCollection* Collection, UObject* InHost)
 {
-	if (!Collection || !InHost) return;
+	if (!Collection) return;
+	UObject* Host = ResolveHost(Collection->HostClass, InHost);
+	if (!Host) return;
+	LoadCollectionInto(Collection, Host, nullptr);
+}
 
+void USettingRegistry::LoadCollectionInto(USettingCollection* Collection, UObject* InHost,
+	USettingPageViewModel* ParentPage)
+{
 	HostObject = InHost;
 	LoadedCollections.AddUnique(Collection);
 
+	// 改动3：Collection 资产本身生成 Group VM 节点（用 CollectionName 作标题，不可点选）
+	USettingPageViewModel* CollectionVM = NewObject<USettingPageViewModel>(this);
+	CollectionVM->SetDisplayName(Collection->CollectionName);
+	CollectionVM->SetSelectable(false);
+	AllViewModels.Add(CollectionVM);
+
+	if (ParentPage) ParentPage->ChildViewModels.Add(CollectionVM);
+	else RootViewModels.Add(CollectionVM);
+
 	for (USettingEntry* Entry : Collection->Entries)
 	{
-		USettingViewModelBase* VM = nullptr;
-		switch (Entry->ValueType)
-		{
-		case ESettingValueType::Scalar:
-			VM = NewObject<USettingScalarViewModel>(this);
-			break;
-		case ESettingValueType::Bool:
-			VM = NewObject<USettingBoolViewModel>(this);
-			break;
-		case ESettingValueType::Enum:
-			VM = NewObject<USettingEnumViewModel>(this);
-			break;
-		case ESettingValueType::Action:
-			VM = NewObject<USettingActionViewModel>(this);
-			break;
-		case ESettingValueType::Page:
-			VM = NewObject<USettingPageViewModel>(this);
-			break;
-		default: continue;
-		}
+		USettingViewModelBase* VM = CreateViewModelForEntry(Entry, InHost);
+		if (!VM) continue;
 
-		VM->Initialize(Entry, InHost);
 		AllViewModels.Add(VM);
-		RootViewModels.Add(VM);
+		CollectionVM->ChildViewModels.Add(VM);
+
+		USettingPageViewModel* PageVM = Cast<USettingPageViewModel>(VM);
+		if (PageVM)
+		{
+			for (USettingCollection* ChildPage : Entry->ChildPages)
+			{
+				if (ChildPage) LoadCollectionInto(ChildPage, InHost, PageVM);
+			}
+		}
 	}
 
-	CurrentPage = nullptr;
+	for (USettingCollection* ChildPage : Collection->ChildPages)
+	{
+		if (ChildPage) LoadCollectionInto(ChildPage, InHost, CollectionVM);
+	}
+
+	if (!ParentPage)
+	{
+		CurrentPage = nullptr;
+	}
 }
 
 void USettingRegistry::SaveChanges()

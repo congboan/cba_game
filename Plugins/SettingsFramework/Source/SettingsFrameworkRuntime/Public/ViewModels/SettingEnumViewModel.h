@@ -1,10 +1,10 @@
 #pragma once
 
-#include "ViewModels/SettingViewModelBase.h"
+#include "ViewModels/SettingValueDiscrete.h"
 #include "SettingEnumViewModel.generated.h"
 
 UCLASS(BlueprintType, Blueprintable)
-class SETTINGSFRAMEWORKRUNTIME_API USettingEnumViewModel : public USettingViewModelBase
+class SETTINGSFRAMEWORKRUNTIME_API USettingEnumViewModel : public USettingValueDiscrete
 {
 	GENERATED_BODY()
 
@@ -22,6 +22,10 @@ public:
 	virtual void StoreInitial() override;
 	virtual void ResetToDefault() override;
 	virtual void RestoreToInitial() override;
+	virtual void SetDiscreteOptionByIndex(int32 Index) override;
+	virtual int32 GetDiscreteOptionIndex() const override;
+	virtual TArray<FText> GetDiscreteOptions() const override;
+	virtual FString GetDiscreteOptionValueAt(int32 Index) const override;
 
 protected:
 	TArray<FSettingOption> Options;

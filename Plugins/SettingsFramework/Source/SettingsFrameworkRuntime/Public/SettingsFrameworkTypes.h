@@ -12,6 +12,7 @@ enum class ESettingValueType : uint8
 	Enum,
 	Action,
 	Page,
+	Group,
 	Color,
 	Vector2D
 };
@@ -63,4 +64,17 @@ struct FSettingOption
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FString Value;
+};
+
+/** 绑定路径：点分/函数链路径（如 "MasterVolume" 或 "GetLocalSettings.MasterVolume"）。编辑器提供属性选择器。 */
+USTRUCT(BlueprintType)
+struct FSettingBindingPath
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	FString Path;
+
+	bool IsEmpty() const { return Path.IsEmpty(); }
+	operator const FString&() const { return Path; }
 };

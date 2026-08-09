@@ -21,7 +21,12 @@ void USettingScalarViewModel::StoreInitial()
 
 void USettingScalarViewModel::ResetToDefault()
 {
-	SetValue(DefaultValue);
+	float Default = DefaultValue;
+	if (Entry && !Entry->DefaultValue.IsEmpty())
+	{
+		Default = FCString::Atof(*Entry->DefaultValue);
+	}
+	SetValue(Default);
 }
 
 void USettingScalarViewModel::RestoreToInitial()
@@ -44,12 +49,9 @@ void USettingScalarViewModel::SetValue(float InValue)
 
 void USettingScalarViewModel::GetValueFromHost()
 {
-	if (Host && ResolvedProperty)
+	FString ValueStr;
+	if (GetHostValueAsString(ValueStr))
 	{
-		void* ValPtr = ResolvedProperty->ContainerPtrToValuePtr<void>(Host);
-		if (const FFloatProperty* FP = CastField<FFloatProperty>(ResolvedProperty))
-		{
-			CurrentValue = FP->GetFloatingPointPropertyValue(ValPtr);
-		}
+		CurrentValue = FCString::Atof(*ValueStr);
 	}
 }

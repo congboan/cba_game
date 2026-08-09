@@ -18,11 +18,9 @@ void USettingEnumViewModel::SetValue(int32 InIndex)
 
 void USettingEnumViewModel::StoreInitial()
 {
-	if (Host && ResolvedProperty)
+	FString CurrentStr;
+	if (GetHostValueAsString(CurrentStr))
 	{
-		void* ValPtr = ResolvedProperty->ContainerPtrToValuePtr<void>(Host);
-		FString CurrentStr;
-		ResolvedProperty->ExportTextItem_Direct(CurrentStr, ValPtr, nullptr, Host, PPF_None);
 		for (int32 i = 0; i < Options.Num(); ++i)
 		{
 			if (Options[i].Value == CurrentStr) { CurrentIndex = i; break; }
@@ -34,10 +32,43 @@ void USettingEnumViewModel::StoreInitial()
 
 void USettingEnumViewModel::ResetToDefault()
 {
-	if (Options.Num() > 0) SetValue(0);
+	int32 DefaultIndex = 0;
+	if (Entry && !Entry->DefaultValue.IsEmpty())
+	{
+		for (int32 i = 0; i < Options.Num(); ++i)
+		{
+			if (Options[i].Value == Entry->DefaultValue) { DefaultIndex = i; break; }
+		}
+	}
+	SetValue(DefaultIndex);
 }
 
 void USettingEnumViewModel::RestoreToInitial()
 {
 	SetValue(InitialIndex);
+}
+
+void USettingEnumViewModel::SetDiscreteOptionByIndex(int32 Index)
+{
+	SetValue(Index);
+}
+
+int32 USettingEnumViewModel::GetDiscreteOptionIndex() const
+{
+	return CurrentIndex;
+}
+
+TArray<FText> USettingEnumViewModel::GetDiscreteOptions() const
+{
+	TArray<FText> Labels;
+	for (const FSettingOption& Opt : Options)
+	{
+		Labels.Add(Opt.Label);
+	}
+	return Labels;
+}
+
+FString USettingEnumViewModel::GetDiscreteOptionValueAt(int32 Index) const
+{
+	return Options.IsValidIndex(Index) ? Options[Index].Value : FString();
 }

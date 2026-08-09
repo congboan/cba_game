@@ -5,6 +5,11 @@
 void USettingsScreenWidget::SetupRegistry(USettingRegistry* InRegistry)
 {
 	Registry = InRegistry;
+	if (SettingsList)
+	{
+		SettingsList->OnEntryActivated.RemoveDynamic(this, &USettingsScreenWidget::NavigateToPage);
+		SettingsList->OnEntryActivated.AddDynamic(this, &USettingsScreenWidget::NavigateToPage);
+	}
 	RefreshDisplay();
 }
 

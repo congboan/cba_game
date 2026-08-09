@@ -1,10 +1,10 @@
-// Copyright cba_game. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
-public class SettingsFrameworkRuntime : ModuleRules
+public class SettingsFrameworkEditor : ModuleRules
 {
-	public SettingsFrameworkRuntime(ReadOnlyTargetRules Target) : base(Target)
+	public SettingsFrameworkEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
@@ -13,19 +13,16 @@ public class SettingsFrameworkRuntime : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"GameplayTags",
-			"ModelViewViewModel",
-			"UMG",
-			"CommonUI",
-			"CommonGame",
+			"SettingsFrameworkRuntime",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Slate",
 			"SlateCore",
+			"UnrealEd",
+			"PropertyEditor",
 			"InputCore",
-			"PropertyPath",
 		});
 	}
 }

@@ -12,21 +12,28 @@ void USettingBoolViewModel::SetValue(bool bInValue)
 
 void USettingBoolViewModel::StoreInitial()
 {
-	if (Host && ResolvedProperty)
-	{
-		void* ValPtr = ResolvedProperty->ContainerPtrToValuePtr<void>(Host);
-		if (const FBoolProperty* BP = CastField<FBoolProperty>(ResolvedProperty))
-		{
-			bCurrentValue = BP->GetPropertyValue(ValPtr);
-		}
-	}
+	GetValueFromHost();
 	bInitialValue = bCurrentValue;
 	Super::StoreInitial();
 }
 
+void USettingBoolViewModel::GetValueFromHost()
+{
+	FString ValueStr;
+	if (GetHostValueAsString(ValueStr))
+	{
+		bCurrentValue = ValueStr == TEXT("true") || ValueStr == TEXT("1");
+	}
+}
+
 void USettingBoolViewModel::ResetToDefault()
 {
-	SetValue(false);
+	bool Default = false;
+	if (Entry && !Entry->DefaultValue.IsEmpty())
+	{
+		Default = Entry->DefaultValue == TEXT("true") || Entry->DefaultValue == TEXT("1");
+	}
+	SetValue(Default);
 }
 
 void USettingBoolViewModel::RestoreToInitial()
