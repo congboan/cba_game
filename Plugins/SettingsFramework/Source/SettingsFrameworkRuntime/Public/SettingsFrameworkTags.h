@@ -1,0 +1,14 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "NativeGameplayTags.h"
+
+// 平台特性标签（对应 Lyra Platform.Trait.* 系列，供 SettingEntry 条件使用）
+
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_SupportsWindowedMode);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_NeedsBrightnessAdjustment);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_SupportsChangingAudioOutputDevice);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_SupportsBackgroundAudio);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_Input_SupportsGamepad);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_Input_SupportsTriggerHaptics);
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Platform_Trait_PrimaryPlayer);

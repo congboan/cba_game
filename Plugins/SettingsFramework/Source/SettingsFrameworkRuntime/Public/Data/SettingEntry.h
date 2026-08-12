@@ -5,8 +5,6 @@
 #include "SettingsFrameworkTypes.h"
 #include "SettingEntry.generated.h"
 
-class USettingCollection;
-
 UCLASS(BlueprintType, EditInlineNew)
 class SETTINGSFRAMEWORKRUNTIME_API USettingEntry : public UPrimaryDataAsset
 {
@@ -48,9 +46,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FGameplayTag EditConditionTag;
 
-	/** ValueType=Page 时：该页包含的子页集合（可嵌套）。 */
+	/** 依赖的设置 DevName：依赖项值变化时刷新本项可编辑状态（对应 Lyra AddEditDependency）。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	TArray<FName> EditDependencyDevNames;
+
+	/** 值依赖条件：依赖项当前值匹配时 Disable/Hide（对应 Lyra FWhenCondition 闭包）。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	TArray<FSettingValueCondition> ValueConditions;
+
+	/** 容器节点（Page/Group）的子设置：递归 Entry 树，任意层级嵌套。 */
 	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly)
-	TArray<USettingCollection*> ChildPages;
+	TArray<TObjectPtr<USettingEntry>> Children;
 };
 
 // END

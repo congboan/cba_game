@@ -58,8 +58,23 @@ void USettingViewModelBase::AddEditCondition(const TSharedRef<FSettingEditCondit
 	EditConditions.Add(InCondition);
 }
 
+void USettingViewModelBase::AddEditDependency(USettingViewModelBase* DependencyVM)
+{
+	if (!DependencyVM || DependencyVM == this) return;
+	EditDependencies.Add(DependencyVM);
+	DependencyVM->AddFieldValueChangedDelegate(
+		USettingViewModelBase::FFieldNotificationClassDescriptor::CurrentDisplayValue,
+		FFieldValueChangedDelegate::CreateUObject(this, &USettingViewModelBase::OnDependencyValueChanged));
+}
+
+void USettingViewModelBase::OnDependencyValueChanged(UObject* Object, UE::FieldNotification::FFieldId FieldId)
+{
+	RefreshEditableState(CachedTraits);
+}
+
 void USettingViewModelBase::RefreshEditableState(FGameplayTagContainer Traits)
 {
+	CachedTraits = Traits;
 	FSettingEditableState State;
 
 	if (Entry && !Entry->PlatformTraits.IsEmpty())
@@ -78,6 +93,34 @@ void USettingViewModelBase::RefreshEditableState(FGameplayTagContainer Traits)
 	for (const TSharedRef<FSettingEditCondition>& Condition : EditConditions)
 	{
 		Condition->GatherEditState(State);
+	}
+
+	// 值依赖条件：依赖 VM 当前值匹配 → Disable/Hide（对应 Lyra FWhenCondition 闭包）
+	if (Entry)
+	{
+		for (const FSettingValueCondition& ValueCond : Entry->ValueConditions)
+		{
+			for (const TWeakObjectPtr<USettingViewModelBase>& DepWeak : EditDependencies)
+			{
+				USettingViewModelBase* DepVM = DepWeak.Get();
+				if (!DepVM || !DepVM->GetEntry()) continue;
+				if (DepVM->GetEntry()->DevName != ValueCond.DependencyDevName) continue;
+				FString DepValue;
+				if (DepVM->GetHostValueAsString(DepValue)
+					&& DepValue == ValueCond.MatchValue)
+				{
+					if (ValueCond.Action == ESettingValueConditionAction::Hide)
+					{
+						State.Hide();
+					}
+					else
+					{
+						State.Disable();
+					}
+				}
+				break;
+			}
+		}
 	}
 
 	int32 NewFlags = 0;

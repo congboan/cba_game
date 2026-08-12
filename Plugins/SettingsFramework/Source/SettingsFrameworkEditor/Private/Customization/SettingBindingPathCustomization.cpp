@@ -33,7 +33,7 @@ void FSettingBindingPathCustomization::CustomizeHeader(TSharedRef<IPropertyHandl
 			.OnGetMenuContent(this, &FSettingBindingPathCustomization::BuildPicker)
 			.ButtonContent()
 			[
-				SNew(SEditableTextBox)
+				SAssignNew(PathTextBox, SEditableTextBox)
 				.Text(this, &FSettingBindingPathCustomization::OnGetPathText)
 				.OnTextCommitted(this, &FSettingBindingPathCustomization::OnPathCommitted)
 			]
@@ -69,6 +69,11 @@ void FSettingBindingPathCustomization::SetPath(FString InPath)
 	if (PathHandle)
 	{
 		PathHandle->SetValue(InPath);
+		PathHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
+	}
+	if (PathTextBox.IsValid())
+	{
+		PathTextBox->SetText(FText::FromString(InPath));
 	}
 }
 

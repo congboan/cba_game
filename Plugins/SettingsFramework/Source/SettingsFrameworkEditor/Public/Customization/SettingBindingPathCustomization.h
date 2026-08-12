@@ -8,6 +8,7 @@
 class IPropertyHandle;
 class SWidget;
 class SComboButton;
+class SEditableTextBox;
 
 /** FSettingBindingPath 的属性选择器：基于所属 Collection 的 HostClass 枚举属性，点选回填路径。 */
 class FSettingBindingPathCustomization : public IPropertyTypeCustomization
@@ -31,4 +32,5 @@ private:
 
 	TSharedPtr<IPropertyHandle> PathHandle;
 	TSharedPtr<SComboButton> ComboButton;
+	TSharedPtr<SEditableTextBox> PathTextBox;
 };

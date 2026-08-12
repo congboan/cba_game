@@ -17,9 +17,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void LoadCollection(USettingCollection* Collection, UObject* InHost = nullptr);
 
-	/** 按类解析宿主：优先反射调用静态 Get()，失败回退 InHost。 */
+	/** 按类解析宿主：校验静态 Get()/GetGameUserSettings() 契约后调用，失败回退 InHost。 */
 	UFUNCTION(BlueprintCallable)
-	UObject* ResolveHost(UClass* InHostClass, UObject* InHost) const;
+	UObject* ResolveHost(TSubclassOf<UGameUserSettings> InHostClass, UObject* InHost) const;
 
 	UFUNCTION(BlueprintCallable)
 	void RegisterViewModelClass(ESettingValueType ValueType, TSubclassOf<USettingViewModelBase> ViewModelClass);
@@ -61,6 +61,18 @@ protected:
 	void LoadCollectionInto(USettingCollection* Collection, UObject* InHost,
 		USettingPageViewModel* ParentPage);
 
+	/** 递归加载单个 Entry：生成 VM 挂到 ParentVM；Page/Group 类型继续加载其 Children。 */
+	void LoadEntryInto(USettingPageViewModel* ParentVM, USettingEntry* Entry, UObject* InHost);
+
+	/** 全部 VM 建立后，按 DevName 解析依赖关系并建立订阅。 */
+	void ResolveDependencies();
+
+	struct FSettingDependencyRequest
+	{
+		USettingViewModelBase* VM = nullptr;
+		TArray<FName> DevNames;
+	};
+
 	UPROPERTY(Transient)
 	TMap<ESettingValueType, TSubclassOf<USettingViewModelBase>> RegisteredViewModelClasses;
 
@@ -80,4 +92,7 @@ protected:
 	USettingViewModelBase* CurrentPage;
 
 	TArray<USettingViewModelBase*> NavStack;
+
+	/** 待解析的依赖请求（加载完成后再建订阅）。 */
+	TArray<FSettingDependencyRequest> PendingDependencies;
 };

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "SettingEntry.h"
+#include "GameFramework/GameUserSettings.h"
 #include "SettingCollection.generated.h"
 
 UCLASS(BlueprintType)
@@ -14,17 +15,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FText CollectionName;
 
-	/** 设置宿主类：须提供静态 Get() 返回宿主实例（Lyra 式，如 UCbaSettingsLocal::Get()）。 */
+	/** 设置宿主类：限定 UGameUserSettings 子类（对齐 Lyra ULyraSettingsLocal），须提供静态 Get()/GetGameUserSettings()。 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	TSubclassOf<UObject> HostClass;
+	TSubclassOf<UGameUserSettings> HostClass;
 
 	/** 内联设置条目：可在 Collection 资产面板内直接添加/编辑，无需单独创建资产。 */
 	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly)
 	TArray<USettingEntry*> Entries;
 
-	/** 子分类页（可嵌套）：每个 Page 资产代表一个可导航进入的子设置分类。 */
-	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly)
-	TArray<USettingCollection*> ChildPages;
+	/** 页面标识（可选），用于导航定位。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FName DevName;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FGameplayTag AssetBundleTag;

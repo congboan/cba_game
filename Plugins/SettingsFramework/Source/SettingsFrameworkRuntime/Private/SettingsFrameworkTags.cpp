@@ -1,0 +1,9 @@
+#include "SettingsFrameworkTags.h"
+
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_SupportsWindowedMode, "Platform.Trait.SupportsWindowedMode");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_NeedsBrightnessAdjustment, "Platform.Trait.NeedsBrightnessAdjustment");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_SupportsChangingAudioOutputDevice, "Platform.Trait.SupportsChangingAudioOutputDevice");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_SupportsBackgroundAudio, "Platform.Trait.SupportsBackgroundAudio");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_Input_SupportsGamepad, "Platform.Trait.Input.SupportsGamepad");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_Input_SupportsTriggerHaptics, "Platform.Trait.Input.SupportsTriggerHaptics");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Platform_Trait_PrimaryPlayer, "Platform.Trait.PrimaryPlayer");

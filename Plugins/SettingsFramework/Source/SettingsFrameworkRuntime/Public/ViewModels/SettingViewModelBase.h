@@ -30,6 +30,12 @@ public:
 	/** 注册可组合编辑条件（生命周期由调用方管理）。 */
 	void AddEditCondition(const TSharedRef<FSettingEditCondition>& InCondition);
 
+	/** 注册依赖 VM：其值变化时刷新本项可编辑状态（对应 Lyra AddEditDependency）。 */
+	void AddEditDependency(USettingViewModelBase* DependencyVM);
+
+	/** 依赖项值变化回调：用缓存 Traits 重算可编辑状态。 */
+	void OnDependencyValueChanged(UObject* Object, UE::FieldNotification::FFieldId FieldId);
+
 	void SetDisplayName(const FText& InText);
 	FText GetDisplayName() const { return DisplayName; }
 
@@ -61,6 +67,12 @@ protected:
 	bool SetHostValueFromString(const FString& ValueString);
 
 	TArray<TSharedRef<FSettingEditCondition>> EditConditions;
+
+	/** 已注册的依赖 VM（弱引用，生命周期由 Registry 管理）。 */
+	TArray<TWeakObjectPtr<USettingViewModelBase>> EditDependencies;
+
+	/** 最近一次 RefreshEditableState 的 Traits（依赖值变化时重算用）。 */
+	FGameplayTagContainer CachedTraits;
 
 	UPROPERTY()
 	TObjectPtr<USettingEntry> Entry;

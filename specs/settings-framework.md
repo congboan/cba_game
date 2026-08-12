@@ -1,6 +1,6 @@
 ---
 dev_mode: "MVVM rewrite of GameSettings as generic plugin"
-required_skills: []
+required_skills: [agent-parallel-work]
 tool_providers: []
 required_tool_capabilities: []
 status: confirmed
@@ -20,8 +20,8 @@ constraints: []
 - 脏追踪 + SaveChanges
 - 注册表：搜索 / FindSettingByDevName / SaveChanges / 导航栈
 - 渲染：USettingsScreenWidget + USettingsEntryWidget + USettingsListView（C++，Blueprintable）
-- 数据源：USettingCollection + USettingEntry（UPrimaryDataAsset），配 BindingPath 反射路径
-- 值存储：插件不存值；宿主 UObject 注入，VM 通过 BindingPath 反射读写
+- 数据源：USettingCollection + USettingEntry（UPrimaryDataAsset），**Entry 单树**：Entry 递归 Children（Instanced），ValueType=Page/Group 为容器节点，Collection 仅作屏幕根容器（含 DevName），配 BindingPath 反射路径
+- 值存储：插件不存值；宿主限定 `TSubclassOf<UGameUserSettings>` 注入（对齐 Lyra `ULyraSettingsLocal : UGameUserSettings`），VM 通过 BindingPath 反射读写；ResolveHost 校验宿主类可解析静态 Get()
 
 ## 不做什么
 
@@ -46,6 +46,14 @@ constraints: []
 - [x] 0 引用 UGameSetting / UGameSettingScreen
 - [x] 0 CBA 前缀类型
 - [ ] PIE 验证
+
+## 设计收敛（2026-08-10 讨论确认）
+
+- 宿主限定 `TSubclassOf<UGameUserSettings>`（Lyra 对照 `ULyraSettingsLocal : UGameUserSettings`），不再使用开放 UObject；ResolveHost 校验静态 Get() 契约
+- 页面树统一为 Entry 单树（对齐 Lyra `UGameSettingCollection : UGameSetting`）：`USettingEntry` 递归 `Children`（Instanced），ValueType=Page/Group 为容器节点，页面 = 列表中的可导航条目
+- `USettingCollection` 删 `ChildPages`、加 `DevName`；删除 `USettingCollectionPage` 独立资产类
+- `USettingRegistry::LoadCollectionInto` 统一递归 Entry 树（仅 Entry→值 VM / Page→PageVM 两种形态）
+- spec 执行依赖 `agent-parallel-work` workflow skill（多 agent 并行开发）
 
 ## 爆炸半径
 

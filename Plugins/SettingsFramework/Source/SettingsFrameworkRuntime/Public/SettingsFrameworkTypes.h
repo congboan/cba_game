@@ -66,6 +66,31 @@ struct FSettingOption
 	FString Value;
 };
 
+UENUM(BlueprintType)
+enum class ESettingValueConditionAction : uint8
+{
+	Disable,
+	Hide,
+};
+
+/** 值依赖条件：依赖项当前值匹配 MatchValue 时应用动作（对应 Lyra FWhenCondition 闭包）。
+ *  DependencyDevName 须同时出现在 EditDependencyDevNames 中以建立刷新订阅。 */
+USTRUCT(BlueprintType)
+struct FSettingValueCondition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FName DependencyDevName;
+
+	/** 匹配值（与依赖项当前原始值比较，如 Enum 的 Value / Bool 的 "true"/"false"）。 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FString MatchValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	ESettingValueConditionAction Action = ESettingValueConditionAction::Disable;
+};
+
 /** 绑定路径：点分/函数链路径（如 "MasterVolume" 或 "GetLocalSettings.MasterVolume"）。编辑器提供属性选择器。 */
 USTRUCT(BlueprintType)
 struct FSettingBindingPath

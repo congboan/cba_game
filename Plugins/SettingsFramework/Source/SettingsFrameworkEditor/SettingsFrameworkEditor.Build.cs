@@ -13,6 +13,7 @@ public class SettingsFrameworkEditor : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"GameplayTags",
 			"SettingsFrameworkRuntime",
 		});
 
@@ -23,6 +24,9 @@ public class SettingsFrameworkEditor : ModuleRules
 			"UnrealEd",
 			"PropertyEditor",
 			"InputCore",
+			"ToolsetRegistry",
+			"AssetRegistry",
+			"Json",
 		});
 	}
 }
