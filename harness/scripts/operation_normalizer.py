@@ -425,10 +425,8 @@ def _provider_effect_requests(provider: dict, ctx: dict,
                 continue
             found, value = _input_field(tool_input, str(field_path))
             if not found:
-                raise ToolAdapterError(
-                    "tool_adapter.required_field_missing",
-                    f"provider {provider.get('_provider_id', provider.get('id', ''))} "
-                    f"的 effect #{ordinal} 无法读取 tool_input.{field_path}")
+                # 字段缺失 = 该 effect 不适用于本次调用（如查询类工具无 AssetPath），跳过
+                continue
             if not isinstance(value, str):
                 raise ToolAdapterError(
                     "tool_adapter.required_field_type_invalid",
@@ -440,6 +438,9 @@ def _provider_effect_requests(provider: dict, ctx: dict,
                     f"provider {provider.get('_provider_id', provider.get('id', ''))} "
                     f"要求 tool_input.{field_path} 为非空字符串")
             values[target] = value
+
+        if not values:
+            continue
 
         path = values.get("path", "")
         if path:

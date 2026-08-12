@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python harness/scripts/scope_guard.py --context",
+            "command": "python harness/scripts/scope_guard.py --context --reset-session-mark",
             "statusMessage": "Loading harness context",
             "timeout": 15
           },

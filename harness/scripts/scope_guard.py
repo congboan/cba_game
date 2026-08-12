@@ -109,7 +109,7 @@ SPEC_FORBIDDEN_FRONTMATTER_FIELDS = {
 }
 
 EVALUATOR_DATA_SCHEMA = {
-    "path_glob": ({"pattern"}, {"pattern", "invert"}),
+    "path_glob": ({"pattern"}, {"pattern", "invert", "exempt_patterns"}),
     "command_write": (
         {"asset_patterns", "write_hints", "read_hints"},
         {"asset_patterns", "write_hints", "read_hints"}),
@@ -374,13 +374,17 @@ def _require_evaluation_budget(ctx: dict) -> None:
 # ════════════════════════════════════════════════════════════════════
 
 def _eval_path_glob(data: dict, ctx: dict) -> str | None:
-    """文件路径命中 glob → 命中。data: {pattern, invert?}"""
+    """文件路径命中 glob → 命中。data: {pattern, invert?, exempt_patterns?}"""
     path = ctx.get("path", "")
     pattern = data.get("pattern", "")
     invert = bool(data.get("invert", False))
     hit = _glob_match(pattern, path)
     if invert:
         hit = not hit
+    if hit:
+        for exempt in (data.get("exempt_patterns") or []):
+            if isinstance(exempt, str) and _glob_match(exempt, path):
+                return None
     return "命中" if hit else None
 
 
@@ -493,8 +497,44 @@ def _eval_state_field(data: dict, ctx: dict) -> str | None:
     return "命中" if actual == expect else None
 
 
+SESSION_WRITE_MARK_PATH = os.path.join(
+    REPO_ROOT, "Saved", "harness_session_codemodified.json")
+
+
+def _is_code_path(path: str) -> bool:
+    p = (path or "").replace("\\", "/")
+    return (p.startswith("Source/") or p.startswith("Plugins/")) and p.endswith((".h", ".cpp", ".cs"))
+
+
+def _mark_session_code_modified() -> None:
+    try:
+        os.makedirs(os.path.dirname(SESSION_WRITE_MARK_PATH), exist_ok=True)
+        with open(SESSION_WRITE_MARK_PATH, "w", encoding="utf-8") as f:
+            json.dump({"code_modified": True}, f)
+    except OSError:
+        pass
+
+
+def _session_code_modified() -> bool:
+    try:
+        with open(SESSION_WRITE_MARK_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return bool(data.get("code_modified"))
+    except (OSError, ValueError):
+        return False
+
+
+def _clear_session_code_modified() -> None:
+    try:
+        os.unlink(SESSION_WRITE_MARK_PATH)
+    except OSError:
+        pass
+
+
 def _eval_build_freshness(data: dict, ctx: dict) -> str | None:
     """上次成功编译必须对应当前 UE 编译输入内容。data: {file}"""
+    if ctx.get("event") == "stop" and not _session_code_modified():
+        return None
     state_path = _build_freshness_state_path(data)
     relative_state_file = _norm(state_path)
 
@@ -508,7 +548,12 @@ def _eval_build_freshness(data: dict, ctx: dict) -> str | None:
     if not isinstance(build_state, dict):
         return "编译状态根节点不是对象"
     if build_state.get("success") is not True:
-        return "上次编译未成功"
+        return (
+            "上次编译未成功"
+            f"（state={relative_state_file}, "
+            f"exit_code={build_state.get('exit_code', '?')}, "
+            f"ts={build_state.get('ts', '?')}, "
+            f"status={build_state.get('status', '?')}）")
 
     recorded = build_state.get("source_fingerprint")
     if not isinstance(recorded, dict):
@@ -781,7 +826,7 @@ def _owned_script_path(inst: dict, data: dict,
 
 def _script_public_context(ctx: dict) -> dict:
     """只把稳定求值协议暴露给 skill 脚本，不泄露 Harness 内部字段。"""
-    return {
+    result = {
         key: ctx.get(key)
         for key in (
             "path",
@@ -797,6 +842,8 @@ def _script_public_context(ctx: dict) -> dict:
             "data",
         )
     }
+    result["path"] = result.get("path") or ""
+    return result
 
 
 def _clip_script_output(value: str) -> str:
@@ -856,7 +903,13 @@ def _eval_script(data: dict, ctx: dict) -> str | None:
         return None
     if completed.returncode == 1:
         if "Traceback" in stderr or "Traceback" in stdout:
-            raise RuntimeError("skill 门禁脚本崩溃（traceback）")
+            detail = "; ".join(
+                value for value in (
+                    f"stdout={stdout}" if stdout else "",
+                    f"stderr={stderr}" if stderr else "",
+                ) if value)
+            suffix = f"; {detail}" if detail else ""
+            raise RuntimeError(f"skill 门禁脚本崩溃（traceback）{suffix}")
         return stdout or "skill 门禁脚本命中"
     detail = "; ".join(
         value for value in (
@@ -2271,6 +2324,8 @@ def _when_matches(inst: dict, event: str) -> bool:
 def evaluate(event: str, ctx: dict, instances: list[dict], task_context: dict) -> dict:
     """对某个时机（pre_write/pre_command/pre_commit/stop）逐条求值。
     返回 {"decision": "allow"|"deny", "reason": ..., "source": ...}"""
+    if event == "pre_write" and _is_code_path(ctx.get("path", "")):
+        _mark_session_code_modified()
     warns = []
     for inst in instances:
         if not _is_active(inst, task_context):
@@ -2422,6 +2477,14 @@ def _parse_workbuddy_hook_payload(
             raise _HookProtocolError(
                 "hook_payload.tool_input_invalid",
                 "tool_input 必须是对象")
+        # DeferExecuteTool 代理：还原内层 MCP 工具名与参数（仅 ue5-editor MCP）。
+        if tool_name == "DeferExecuteTool":
+            inner_name = tool_input.get("toolName")
+            if isinstance(inner_name, str) and inner_name.startswith("mcp__ue5__"):
+                inner_params = tool_input.get("params")
+                tool_name = inner_name
+                if isinstance(inner_params, dict):
+                    tool_input = inner_params
         tool_kind = WORKBUDDY_TOOL_KINDS.get(tool_name, "generic")
 
         ctx: dict = {
@@ -3742,6 +3805,8 @@ def main() -> int:
     task_context_report = current_task_context_report
 
     if rest and rest[0] == "--context":
+        if "--reset-session-mark" in rest:
+            _clear_session_code_modified()
         print(json.dumps(
             _context_output(
                 scope, discovered, diagnostics, task_context,

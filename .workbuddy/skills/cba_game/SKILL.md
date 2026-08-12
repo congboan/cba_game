@@ -4,12 +4,16 @@ description: cba_game project root skill
 required_tool_capabilities: []
 tool_providers:
   - id: ue5-editor-mcp
-    tool_glob: "mcp__ue5__*"
+    tool_glob: "mcp__ue5__call_tool"
     capabilities:
       - ue.asset.edit
     effects:
       - event: pre_tool
         confidence: partial
+      - event: pre_write
+        operation: write
+        path_field: "arguments.AssetPath"
+        confidence: exact
     unresolved_events:
       - pre_tool
 constraints:
@@ -290,3 +294,19 @@ WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会�
    `--context` 验证。
 4. 写 `specs/**` 前需激活 `governance-authoring`（见 AGENTS.md 治理任务
    强制路由）；激活本身通过 state 写入，逐次人工确认。
+
+## 编译失败重试纪律（2026-08-10 治理修复）
+
+同一环境性编译失败（UBA 残留锁、编辑器占用引擎 dll 致 LNK1104 等）连续 2 次后，AI 必须停止自动重试/探测，明确报告根因并等待人工处理；禁止反复重试或换工具绕过。
+
+## MCP 工具集能力（2026-08-10 调研）
+
+- `SettingsFrameworkToolset`：只能创建/填充 USettingCollection 资产，不能创建 WBP
+- `UMGToolSet`：可 CreateWidgetBlueprint / AddWidget / CompileWidgetBlueprint，能搭 WBP widget 树
+- `MVVMToolset`：配置 WidgetBlueprint 的 MVVM（ViewModel / 属性 / 事件绑定）
+- `editor_toolset.ObjectTools`：list/get/set_properties 设置任意对象属性
+- 编辑器运行期间引擎 dll 被占用 → 编译 LNK1104 失败；MCP 工作流与编译门禁互斥：用 MCP 时避免触发编译，编译前先关编辑器
+
+## 架构约束（用户确认 2026-08-10）
+
+`UGameUIManagerSubsystem` / `UCommonGameInstance` 等全局宿主不进 GameFeature 插件，放 `Source/cba_game/**`。

@@ -88,6 +88,19 @@ def _record_failure_state(exit_code: int, *, status: str = "failed") -> bool:
         return False
 
 
+def _preserve_success_state(fp_current):
+    if fp_current is None:
+        return False
+    try:
+        with open(BUILD_STATE_PATH, "r", encoding="utf-8") as handle:
+            prev = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    return (prev.get("success") is True
+            and isinstance(prev.get("source_fingerprint"), dict)
+            and fingerprint_matches(prev["source_fingerprint"], fp_current))
+
+
 def _remaining_seconds(deadline_monotonic: float) -> float:
     return deadline_monotonic - time.monotonic()
 
@@ -236,20 +249,33 @@ def main() -> int:
     deadline = time.monotonic() + BUILD_TOTAL_BUDGET_SECONDS
 
     try:
-        _write_build_state(False, -1, status="starting")
-    except OSError as exc:
-        print(f"[ERROR] Cannot invalidate previous build state: {exc}")
+        fp_before = fingerprint_project_sources(PROJECT_DIR, deadline_monotonic=deadline)
+    except SourceFingerprintError as exc:
+        print(f"[ERROR] Cannot fingerprint sources: {exc}")
+        _record_failure_state(1)
         return 1
+    preserve_success = _preserve_success_state(fp_before)
+    if preserve_success:
+        print("[INFO] Source unchanged; previous success preserved")
+    else:
+        try:
+            _write_build_state(False, -1, source_fingerprint=fp_before, status="running")
+        except OSError as exc:
+            print(f"[ERROR] Cannot record running state: {exc}")
+            _record_failure_state(1)
+            return 1
 
     projects = find_uprojects()
     if not projects:
         print(f"[ERROR] No .uproject found in {PROJECT_DIR}")
-        _record_failure_state(1)
+        if not preserve_success:
+            _record_failure_state(1)
         return 1
     if len(projects) > 1:
         names = [os.path.basename(p) for p in projects]
         print(f"[ERROR] Multiple .uproject files: {names}")
-        _record_failure_state(1)
+        if not preserve_success:
+            _record_failure_state(1)
         return 1
 
     uproject = projects[0]
@@ -260,24 +286,11 @@ def main() -> int:
     if not engine:
         msg = "Engine root not found (set ENGINE_ROOT/UE_ENGINE_ROOT or fix EngineAssociation)"
         print(f"[SKIP] {msg}")
-        _record_failure_state(2, status="skipped")
+        if not preserve_success:
+            _record_failure_state(2, status="skipped")
         return 2
 
     ubt = os.path.join(engine, UBT_REL)
-
-    try:
-        fp_before = fingerprint_project_sources(PROJECT_DIR, deadline_monotonic=deadline)
-    except SourceFingerprintError as exc:
-        print(f"[ERROR] Cannot fingerprint sources: {exc}")
-        _record_failure_state(1)
-        return 1
-
-    try:
-        _write_build_state(False, -1, source_fingerprint=fp_before, status="running")
-    except OSError as exc:
-        print(f"[ERROR] Cannot record running state: {exc}")
-        _record_failure_state(1)
-        return 1
 
     print(f"Engine:  {engine}")
     print(f"Target:  {target} {PLATFORM} {CONFIG}")
@@ -286,7 +299,7 @@ def main() -> int:
     print(f"Budget:  {BUILD_TOTAL_BUDGET_SECONDS}s internal + {BUILD_REPORT_RESERVE_SECONDS}s reserve\n")
 
     args = [ubt, target, PLATFORM, CONFIG,
-            f"-Project={uproject}", "-WaitMutex", "-NoHotReload", "-architecture=x64"]
+            f"-Project={uproject}", "-WaitMutex", "-NoHotReload", "-NoUBA", "-architecture=x64"]
     print("Running: UnrealBuildTool " + " ".join(
         os.path.basename(a) if i == 0 else a for i, a in enumerate(args)))
     print()
@@ -348,7 +361,8 @@ def main() -> int:
         print(f"Full log: {log_path}" if log_path else "(log not saved)")
         if "Live Coding" in all_output or "Hot-reloadable" in all_output:
             print("[TIP] Live Coding 激活：请先完全退出 UE 编辑器后重试编译")
-        _record_failure_state(exit_code if exit_code != 0 else 1)
+        if not preserve_success:
+            _record_failure_state(exit_code if exit_code != 0 else 1)
         return 1
 
     print("[PASS] Build succeeded.")
