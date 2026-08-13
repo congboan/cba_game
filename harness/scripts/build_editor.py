@@ -6,7 +6,8 @@ Drives UnrealBuildTool.exe -> cl.exe -> link -> Editor target.
 不预设错误类型——只判断编译是否通过并验证源码新鲜度，完整日志交给 AI 诊断。
 
 Usage:
-  python harness/scripts/build_editor.py
+  python harness/scripts/build_editor.py [--force]
+  --force: rebuild even when the previous success already matches current sources
 Exit code:
   0 = PASS / 1 = FAIL / 2 = SKIP (no engine found)
 """
@@ -42,6 +43,7 @@ BUILD_TOTAL_BUDGET_SECONDS = 1800
 WORKBUDDY_POST_TOOL_TIMEOUT_SECONDS = 1860
 BUILD_REPORT_RESERVE_SECONDS = (
     WORKBUDDY_POST_TOOL_TIMEOUT_SECONDS - BUILD_TOTAL_BUDGET_SECONDS)
+FORCE_REBUILD = "--force" in sys.argv
 
 
 def _write_build_state(success: bool, exit_code: int,
@@ -255,8 +257,12 @@ def main() -> int:
         _record_failure_state(1)
         return 1
     preserve_success = _preserve_success_state(fp_before)
+    if preserve_success and not FORCE_REBUILD:
+        print("[INFO] Source unchanged; previous build proves current state; skipping UBT")
+        print(f"[INFO] Fingerprint: {fp_before['digest']}")
+        return 0
     if preserve_success:
-        print("[INFO] Source unchanged; previous success preserved")
+        print("[INFO] --force rebuild; previous success preserved until new result")
     else:
         try:
             _write_build_state(False, -1, source_fingerprint=fp_before, status="running")

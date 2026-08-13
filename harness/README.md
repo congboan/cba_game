@@ -527,7 +527,7 @@ WorkBuddy 文件工具，也可来自 PowerShell/Bash 的可识别文件操作�
 
 | evaluator | data 字段 | 含义 / 命中条件 |
 |---|---|---|
-| `path_glob` | `{pattern, invert?}` | 目标文件路径命中 `pattern` glob 即命中；`invert:true` 则"不命中才算违规"（用于"只许改某范围"） |
+| `path_glob` | `{pattern, invert?, exempt_patterns?}` | 目标文件路径命中 `pattern` glob 即命中；命中任一 `exempt_patterns` 则豁免；`invert:true` 则"不命中才算违规"（用于"只许改某范围"） |
 | `command_write` | `{asset_patterns, write_hints, read_hints}` | `pre_command` 原始命令同时命中任一 `asset_patterns` 与任一 `write_hints` 时命中；三个字段都由当前 constraint 自有，`read_hints` 明确列出已知纯读特征但不覆盖同一命令中已出现的写特征。它不是 Harness 授权白名单 |
 | `state_field` | `{file, field, equals, missing_equals?}` | 读取 `file`（严格的仓库内相对 JSON 状态路径），其 `field` 字段值等于 `equals` 即命中；只有文件确实不存在时才使用 `missing_equals`（不指定则缺文件放行）。文件存在但不可读、JSON/根结构损坏或字段缺失均属于 evaluator 失效并终止任务 |
 | `build_freshness` | `{file}` | `file` 中没有对应当前 UE 编译输入指纹的成功编译结果即命中；用于 stop/pre_commit |

@@ -219,7 +219,7 @@ harness 的 `operation_normalizer.py` 只能静态解析**纯命令**。复合�
 
 ## .workbuddy 工作区保护（2026-08-07 事故教训）
 
-- `.workbuddy/`（memory/skills）在 git add/commit 后曾整体消失，靠 `git restore` 救回，根因未完全定位（疑与 Windows junction 处理有关）。
+- `.workbuddy/`（memory/skills）在 git add/commit 后曾整体消失，靠 `git restore` 救回，根因已确认：用户误删（2026-08-13 用户确认），非 junction 问题。
 - **禁止**对 `.workbuddy/` 执行破坏性 git 操作：`git clean`、`git checkout -- .workbuddy`（除非明确要恢复）、`git reset --hard` 等；优先用 `git restore <具体文件>` 精确恢复。
 - 涉及 `.workbuddy/` 的 `git add -A` / commit 前，先 `git status --short` 审查改动清单，确认没有意外删除/替换。
 - 若 root skill 再次 missing，按 `harness/README.md` 恢复协议：`git ls-files .workbuddy/` 确认索引完整 → `git restore .workbuddy/` 恢复 → `scope_guard.py --context` 验证。
@@ -254,20 +254,20 @@ python harness/scripts/launch_editor.py
 
 **AI 在源码变更后的完整构建流程**：
 
-1. `python harness/scripts/build_editor.py`  → 编译
+1. `python harness/scripts/build_editor.py`  → 编译（指纹未变且上次成功时秒级跳过 UBT；`--force` 强制全量）
 2. `python harness/scripts/launch_editor.py` → 启动验证
 
 ## WorkBuddy hook stdin JSON 截断规避（认知约束）
 
 WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会在约
-441-797 列截断，产生 `hook_payload.invalid_json` 与 `HARNESS_TASK_ABORT`。
+616-797 列截断（2026-08-13 实测 2.3KB 载荷 616 列即断），产生 `hook_payload.invalid_json` 与 `HARNESS_TASK_ABORT`。
 截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内修复；AI 必须
 认知规避，不得把 abort 误判为治理故障。
 
 **执行规范**：
 
-1. 长文件写入/编辑一律分段小操作，每段 payload 控制在约 200 字符内
-   （实测 Edit 的 old_string/new_string 合计超 700 字符即触发）。
+1. 长文件写入/编辑一律分段小操作，每段 payload 控制在约 150 字符内
+   （2026-08-13 实测 2.3KB Edit 在 616 列截断，中文 UTF-8 转义会放大列数）。
 2. 命令行参数避免长中文内容（UTF-8 多字节加剧截断），如 git commit message
    改用短 ASCII 或 `-F <file>` 从文件读。
 3. 触发 `invalid_json` abort 后：任务终止是协议要求，禁止降级放行、禁止换
@@ -310,3 +310,10 @@ WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会�
 ## 架构约束（用户确认 2026-08-10）
 
 `UGameUIManagerSubsystem` / `UCommonGameInstance` 等全局宿主不进 GameFeature 插件，放 `Source/cba_game/**`。
+
+## GameFeature 认知模型（2026-08-12 校准）
+
+GameFeature 是"可插拔加载单元"，不存在固定组成模板：核心 = GameFeatureData 资产 + 生命周期状态机；内容、代码模块、GameFeatureAction 均为可选组成，不是必需。
+- GameFeatureAction = 激活/停用时的行为钩子（挂组件/注输入/弹 UI）；无 Action 的 GameFeature 完全合法
+- 验证 GameFeature = 加载/激活状态，不依赖 Actor/控制台命令等样板
+- 测试插件（如 GFTests）是通用测试宿主：内容按被测对象决定，禁止套用"Actor + Action + 命令"模板

@@ -44,16 +44,18 @@ def _is_code_path(path: str, patterns) -> bool:
     return any(p.match(norm) for p in patterns)
 
 
-def _read_active_spec() -> str | None:
+def _read_active_spec() -> str:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as handle:
             state = json.load(handle)
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError) as error:
+        raise RuntimeError("state file missing or corrupted") from error
     if not isinstance(state, dict):
-        return None
+        raise RuntimeError("state root must be object")
     value = state.get("active_spec")
-    return value if isinstance(value, str) else None
+    if not isinstance(value, str):
+        raise RuntimeError("active_spec must be string")
+    return value
 
 
 def main() -> int:
@@ -79,9 +81,11 @@ def main() -> int:
     if not _is_code_path(path, code_patterns):
         return 0
 
-    active_spec = _read_active_spec()
-    if active_spec is None:
-        return 0
+    try:
+        active_spec = _read_active_spec()
+    except RuntimeError as error:
+        print("gate state failure: " + str(error), file=sys.stderr)
+        return 2
 
     if not active_spec.strip():
         print("code write blocked: no active spec selected")

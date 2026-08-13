@@ -6,6 +6,16 @@
 
 ---
 
+## 2026-08-13 · build_editor 证明有效时跳过 UBT
+
+**决策**：build_editor.py 算完当前指纹后，若上次成功且指纹一致，直接打印 skip 返回 0，不启动 UBT；新增 --force 强制重建。
+
+**理由**：PostToolUse 对每次文件工具都触发编译，hook 截断又强制分段小写入，N 次编辑带来 N 次完整 UBT；指纹匹配已证明当前源码即上次成功编译的源码，重复编译无证明增益。
+
+**边界**：快路径不修改证明文件；失败或无指纹仍走完整编译。--force 供人工重建。本决策不改 PostToolUse 即时反馈定位。
+
+---
+
 ## 2026-08-06 · 纯渲染/任务管理工具补入无建模副作用集合
 
 **决策**：`operation_normalizer.py` 的 `TOOLS_WITH_NO_MODELED_EFFECTS` 补充
