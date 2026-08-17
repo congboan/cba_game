@@ -16,9 +16,19 @@ from tool_governance import SEMANTIC_EVENTS
 
 # 这些集合只缩小“现有 evaluator 所关心的副作用”范围，不是 allow 白名单。
 COMMANDS_WITH_NO_MODELED_EFFECTS = {
+    "basename",
     "cat",
+    "cksum",
+    "cut",
+    "df",
+    "diff",
     "dir",
+    "dirname",
+    "du",
     "echo",
+    "egrep",
+    "fgrep",
+    "file",
     "findstr",
     "gci",
     "get-childitem",
@@ -26,17 +36,41 @@ COMMANDS_WITH_NO_MODELED_EFFECTS = {
     "get-filehash",
     "get-item",
     "get-location",
+    "grep",
+    "head",
     "ls",
+    "md5sum",
     "pwd",
+    "realpath",
+    "readlink",
     "resolve-path",
     "select-string",
+    "sha1sum",
+    "sha256sum",
+    "sha512sum",
+    "stat",
+    "tail",
     "test-path",
     "tree",
     "type",
+    "uniq",
+    "wc",
     "where",
     "where.exe",
     "write-output",
 }
+
+# find 本身只读，但携带这些动作/标志会删除文件、写文件或执行命令，
+# 因此必须在专用分析中识别为 unresolved 写副作用，而不是当作纯只读放行。
+FIND_MUTATING_FLAG_PREFIXES = (
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-fprint",
+    "-fls",
+    "-ok",
+    "-okdir",
+)
 
 GIT_READ_SUBCOMMANDS = {
     "diff",
@@ -1142,6 +1176,16 @@ def _command_analysis(ctx: dict, repo_root: str) -> dict:
         return _analysis(
             tool_name, "command", [raw_request],
             evidence=["no_modeled_effects:rg"])
+    if program in {"find", "find.exe"}:
+        if any(
+                arg.lower().startswith(FIND_MUTATING_FLAG_PREFIXES)
+                for arg in tokens[1:]):
+            return _analysis(
+                tool_name, "command", [raw_request],
+                ["pre_write"], ["find_mutating_flag_unresolved"])
+        return _analysis(
+            tool_name, "command", [raw_request],
+            evidence=["no_modeled_effects:find"])
     if program in COMMANDS_WITH_NO_MODELED_EFFECTS:
         return _analysis(
             tool_name, "command", [raw_request],
