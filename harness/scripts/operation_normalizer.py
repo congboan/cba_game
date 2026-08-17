@@ -20,6 +20,7 @@ COMMANDS_WITH_NO_MODELED_EFFECTS = {
     "cat",
     "cksum",
     "cut",
+    "date",
     "df",
     "diff",
     "dir",
@@ -38,8 +39,11 @@ COMMANDS_WITH_NO_MODELED_EFFECTS = {
     "get-location",
     "grep",
     "head",
+    "hexdump",
     "ls",
     "md5sum",
+    "od",
+    "printf",
     "pwd",
     "realpath",
     "readlink",
@@ -49,15 +53,20 @@ COMMANDS_WITH_NO_MODELED_EFFECTS = {
     "sha256sum",
     "sha512sum",
     "stat",
+    "strings",
     "tail",
     "test-path",
+    "tr",
     "tree",
     "type",
+    "uname",
     "uniq",
     "wc",
     "where",
     "where.exe",
+    "which",
     "write-output",
+    "xxd",
 }
 
 # find 本身只读，但携带这些动作/标志会删除文件、写文件或执行命令，
@@ -298,7 +307,7 @@ def _command_tokens(command: str) -> tuple[list[str], str]:
     """只把能够静态证明为单条命令的文本交给具体 adapter。"""
     quote = ""
     for char in command:
-        if char in {"%", "!", "^"}:
+        if char in {"!", "^"}:
             return [], "environment expansion or shell escape"
         if quote == "'":
             if char == "'":
