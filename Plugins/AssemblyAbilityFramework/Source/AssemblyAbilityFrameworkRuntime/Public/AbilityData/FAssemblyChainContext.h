@@ -36,26 +36,4 @@ struct ASSEMBLYABILITYFRAMEWORKRUNTIME_API FAssemblyChainContext
 	/** 整条链中累积的伤害修正映射（Tag → 倍率）。 */
 	UPROPERTY(BlueprintReadWrite, Category = "Chain")
 	TMap<FGameplayTag, float> DamageModifiers;
-
-	/** 此链中已应用的规则 ID 追踪。 */
-	UPROPERTY(BlueprintReadWrite, Category = "Chain")
-	FGameplayTagContainer AppliedRuleIds;
-
-	/** 规则应用次数追踪。 */
-	UPROPERTY(BlueprintReadWrite, Category = "Chain")
-	TMap<FGameplayTag, int32> RuleApplyCounts;
-
-	/** 当前被屏蔽的触发器标签。 */
-	UPROPERTY(BlueprintReadWrite, Category = "Chain")
-	FGameplayTagContainer TriggerMask;
-
-	/** 整条链中被阻止的触发器组。 */
-	UPROPERTY(BlueprintReadWrite, Category = "Chain")
-	FGameplayTagContainer BlockedTriggerGroups;
-
-	/** 检查给定标签是否被屏蔽。 */
-	bool IsTriggerMasked(FGameplayTag TriggerTag) const
-	{
-		return TriggerMask.HasTag(TriggerTag) || BlockedTriggerGroups.HasTag(TriggerTag);
-	}
 };

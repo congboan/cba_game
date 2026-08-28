@@ -69,37 +69,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AssemblyAbility|Debug")
 	bool bLogCancelation = false;
 
-	/** 链事件最大深度。防止触发链无限递归。 */
-	static constexpr int32 MaxChainDepth = 32;
-
 	// ── 链式触发上下文收发（editor-first 手写 GA 使用）────
-
-	/**
-	 * 发送链式 GameplayEvent — 从 TriggerEventData 继承并推进链上下文（FAssemblyChainContext）。
-	 *
-	 * 读取父事件的链上下文（若有），深度 +1，回填 RootEventId / Instigator，
-	 * 再通过 ASC->HandleGameplayEvent 广播 EventTag。超过 MaxChainDepth 时中止并告警。
-	 *
-	 * C++ 全保真版：TriggerEventData 可为 nullptr（新链根）。执行策略等内部调用走此重载。
-	 */
-	void SendChainEvent(
-		const FGameplayTag& EventTag,
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayEventData* TriggerEventData);
-
-	/**
-	 * 蓝图版发送链事件 — 供编辑器手写 GA 蓝图调用。
-	 * 使用当前 ActorInfo；ParentContext 传入上一跳的链上下文（无则留默认）。
-	 */
-	UFUNCTION(BlueprintCallable, Category = "AssemblyAbility|Chain")
-	void K2_SendChainEvent(FGameplayTag EventTag, const FAssemblyChainContext& ParentContext);
-
-	/**
-	 * 蓝图版读取链上下文 — 从 TriggerEventData 的 InstancedEventData 取出 FAssemblyChainContext。
-	 * 无有效上下文时返回默认值（ChainDepth=0）。bFound 指示是否命中。
-	 */
-	UFUNCTION(BlueprintCallable, Category = "AssemblyAbility|Chain")
-	FAssemblyChainContext GetChainContext(const FGameplayEventData& TriggerEventData, bool& bFound) const;
 
 protected:
 	// ── UGameplayAbility 覆写 ─────────────────────────

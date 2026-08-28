@@ -350,11 +350,6 @@ void UGA_AssemblyEventRouter::DebugDumpTable() const
 	}
 }
 
-bool UGA_AssemblyEventRouter::CheckChainDepth(int32 CurrentDepth) const
-{
-	return MaxChainDepth <= 0 || CurrentDepth < MaxChainDepth;
-}
-
 bool UGA_AssemblyEventRouter::TryConsumeEventSlot()
 {
 	if (MaxEventsPerFrame <= 0)
@@ -377,12 +372,6 @@ bool UGA_AssemblyEventRouter::TryConsumeEventSlot()
 
 	++FrameEventCount;
 	return true;
-}
-
-void UGA_AssemblyEventRouter::ResetFrameEventCounter()
-{
-	FrameEventCount = 0;
-	LastFrameNumber = GFrameCounter;
 }
 
 UAbilitySystemComponent* UGA_AssemblyEventRouter::GetASC() const

@@ -72,17 +72,12 @@ public:
 	void DebugDumpTable() const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AssemblyAbility|Safety")
-	int32 MaxChainDepth = 32;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AssemblyAbility|Safety")
 	int32 MaxFanOutCount = 64;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AssemblyAbility|Safety")
 	int32 MaxEventsPerFrame = 256;
 
-	bool CheckChainDepth(int32 CurrentDepth) const;
 	bool TryConsumeEventSlot();
-	void ResetFrameEventCounter();
 	int32 GetFrameEventCount() const { return FrameEventCount; }
 
 protected:
