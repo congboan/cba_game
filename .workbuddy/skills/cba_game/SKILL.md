@@ -224,11 +224,11 @@ harness 的 `operation_normalizer.py` 只能静态解析**纯命令**。复合�
 - 涉及 `.workbuddy/` 的 `git add -A` / commit 前，先 `git status --short` 审查改动清单，确认没有意外删除/替换。
 - 若 root skill 再次 missing，按 `harness/README.md` 恢复协议：`git ls-files .workbuddy/` 确认索引完整 → `git restore .workbuddy/` 恢复 → `scope_guard.py --context` 验证。
 
-## 编辑载荷规避（WorkBuddy hook JSON 截断）
+## 编辑载荷（2026-09-10 后）
 
-- WorkBuddy hook 通道对较大载荷偶发截断（`hook_payload.invalid_json` / gate input 截断），直接导致任务 abort。
-- **改文件用小步 Edit**（每次改动控制在几十行内），大文件整体改写用 Write 全量一次完成；避免单次 Edit 携带大段文本。
-- 对 `harness/scripts/scope_guard.py` 等关键文件的修改若持续截断，需终端手动改或等客户端修复，不要反复重试。
+- 曾记录的「较大载荷偶发截断」（`hook_payload.invalid_json` / gate input 截断）已查明为
+  harness 侧 stdin 解码缺陷并已修复，见下方「载荷编码」章节；原分段小写入的规避规范作废。
+- 改文件按常规 Edit/Write 粒度即可；`harness/scripts/**`、`.codebuddy/**` 等控制面仍逐次人工确认。
 
 ## 编辑器启动验证
 
@@ -257,24 +257,24 @@ python harness/scripts/launch_editor.py
 1. `python harness/scripts/build_editor.py`  → 编译（指纹未变且上次成功时秒级跳过 UBT；`--force` 强制全量）
 2. `python harness/scripts/launch_editor.py` → 启动验证
 
-## WorkBuddy hook stdin JSON 截断规避（认知约束）
+## 载荷编码（认知约束，2026-09-10 重写）
 
-WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会在约
-616-797 列截断（2026-08-13 实测 2.3KB 载荷 616 列即断），产生 `hook_payload.invalid_json` 与 `HARNESS_TASK_ABORT`。
-截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内修复；AI 必须
-认知规避，不得把 abort 误判为治理故障。
+hook 通道与 gate 通道的载荷编码已修复；历史「长载荷截断」归因是误判，不再成立。
+
+- 真实根因：`scope_guard.py` 用 `sys.stdin.read()` 按进程 ANSI 编码（zh-CN 下 cp936）
+  解码客户端发来的 **UTF-8** 字节。3 字节 UTF-8 与 2 字节 GBK 节奏错位后，会静默吞掉
+  `\` 之类的结构字符，使 JSON 从中间断裂。因此与载荷长度无关——约 11KB 纯 ASCII 载荷
+  当时即可通过，中文载荷才会失败。
+- 已修复：hook 侧改读 `sys.stdin.buffer` 并按 UTF-8 显式解码（失败 fail-closed）；gate
+  侧 ctx JSON 改发 ASCII-safe 文档。详见 `harness/decisions.md` 2026-09-10 ADR。
 
 **执行规范**：
 
-1. 长文件写入/编辑一律分段小操作，每段 payload 控制在约 150 字符内
-   （2026-08-13 实测 2.3KB Edit 在 616 列截断，中文 UTF-8 转义会放大列数）。
-2. 命令行参数避免长中文内容（UTF-8 多字节加剧截断），如 git commit message
-   改用短 ASCII 或 `-F <file>` 从文件读。
-3. 触发 `invalid_json` abort 后：任务终止是协议要求，禁止降级放行、禁止换
-   未适配入口绕过；等待用户确认后重新发起（分段小写入即可正常完成）。
+1. 按正常粒度读写文件即可，**不再需要**「每段 ≤150 字符」或「避免长中文参数」的分段规避。
+2. 若仍遇 `hook_payload.invalid_json`：属序列化层 abort，可自行以更小载荷重试同一动作；
+   但应先怀疑编码通道而非长度，保留失败样本后再动机制，禁止降级放行或换未适配入口绕过。
 
-**为什么**：hook stdin 是治理门禁信任边界（见 harness/decisions.md 对应 ADR）。
-该问题真实修复点在 WorkBuddy 客户端序列化，不在 harness 侧。
+**为什么**：hook stdin 与 gate stdin 都是治理门禁的信任边界，解码必须显式，不得依赖进程 locale。
 
 ## spec/state 激活规范（认知约束）
 

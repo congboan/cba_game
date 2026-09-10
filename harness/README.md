@@ -480,11 +480,12 @@ Hook stdin 已不是合法 JSON、scope_guard 本身无法启动，或诊断无�
 
 ### 编译新鲜度门禁
 
-`PostToolUse` 自动编译只是即时反馈，不是编译门禁的正确性来源。`build_editor.py` 在 UBT 编译前后分别
+`build_editor.py` 由主 agent 显式触发（`PostToolUse` 自动编译已于 2026-09-10 移除）；它只产生
+证明，不是门禁的正确性来源。`build_editor.py` 在 UBT 编译前后分别
 计算 UE 编译输入内容指纹；两次一致且编译成功时，才把 `success:true` 与
 `source_fingerprint` 写入 `Saved/harness_last_build.json`。编译过程中源码变化会使本次结果失效。
 
-编译执行采用独立的内外时间预算：WorkBuddy PostToolUse timeout 为 1860 秒，`build_editor.py` 的整个
+编译执行采用独立的时间预算：`build_editor.py` 的整个
 生命周期共享 1800 秒预算，预留 60 秒用于清理、状态和报告。执行器启动时先用原子替换写入
 `starting/running + success:false`，成功状态只能在编译和指纹验证全部完成后原子写入。Windows 下 UBT
 进入带 `KILL_ON_JOB_CLOSE` 的 Job Object；内部超时会显式清理进程树，客户端取消或父进程退出时句柄
@@ -630,9 +631,9 @@ python -B -m unittest discover -s harness/tests -v
 
 - **AI 层**（`.codebuddy/settings.json`，即时反馈）：SessionStart→context；
   PreToolUse(WorkBuddy 全部工具通配捕获)→单次 scope_guard→有效 provider/capability→normalizer 产生所需语义事件；
-  PostToolUse(文件工具)→build_editor 在受管进程树和独立时间预算内即时编译；
+  编译→主 agent 显式触发 build_editor（2026-09-10 起移除 PostToolUse 自动编译）；
   Stop/commit→`build_freshness` 比较当前源码指纹。
-  PostToolUse 不覆盖所有写入入口只影响即时反馈，不再形成门禁缺口。
+  编译触发范围不参与门禁正确性证明。
 - **系统层**（`.githooks/`，硬，最终防线）：pre-commit 编译+禁区、commit-msg 格式。
   ⏳ 待办：项目 `git init` 后建立（阶段 2）。
 

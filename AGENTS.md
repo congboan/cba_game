@@ -104,7 +104,7 @@ WorkBuddy PreToolUse 有四种结果：
   动态治理策略面，必须由用户逐次确认；不得自行建立或假设持久维护模式。
 - `HARNESS_TASK_ABORT`，或 `hook_protocol_report` / `task_context_report` /
   `tool_adapter_report` / `evaluator_report` / `time_budget_report`：客户端协议、当前有效 provider、
-  evaluator 或治理求值预算失效。AI 必须立即结束当前正常任务并把完整报告交给人处理；不得猜测或
+  evaluator 或治理求值预算失效。按来源分级（2026-09-10 ADR）：序列化层 abort（公共 envelope 损坏）可自行以更小载荷重试；求值层 abort 必须立即结束任务并交人，不得猜测或
   降级。只有 `task_context_report` 明确给出受限恢复协议、且用户随后明确要求修复时，才可在新修复任务
   中使用该协议；其他 abort 仍只能交给人在 hook 外处理。
 
@@ -116,7 +116,7 @@ provider 能提供证据（或相关副作用被识别为 unresolved）、约束
 编译门禁不信任孤立的 `success:true`。`build_editor.py` 成功时记录 UE 编译输入内容指纹，stop/commit
 通过 `build_freshness` 重新比较当前源码；任何工具或客户端外编辑造成的源码变化都会让旧成功状态失效。
 `build_editor.py` 启动 UBT 前先原子记录非成功状态，并托管编译子进程树；取消、超时或父进程退出不得
-保留旧成功状态或孤儿 UBT。PostToolUse 自动编译只提供即时反馈，不是门禁正确性的来源。
+保留旧成功状态或孤儿 UBT。编译是主 agent 的显式动作（PostToolUse 自动编译已于 2026-09-10 移除）；stop/commit 正确性来自 `build_freshness`，不是任何即时反馈。
 
 Harness 控制面保护不依赖 root/workflow/spec 激活。精确修改走人工确认；无法证明写入目标的工具只拒绝
 当前调用。该保护只成立于客户端已加载并执行当前项目 hook 的范围内。
@@ -124,7 +124,8 @@ Harness 控制面保护不依赖 root/workflow/spec 激活。精确修改走人�
 当前有效治理宿主的静态声明损坏时，Harness 仍对正常任务 fail-closed，但会从结构化诊断派生仓库内
 `repair_targets` 与只读 `inspection_roots`。恢复态只接受真实载荷已确认的 WorkBuddy `Read`、
 `scope_guard.py` 只读自检，以及精确单目标的结构化 Write/Edit；写入逐次 `ask`，删除、shell 写入、
-未知副作用和越界路径继续 `HARNESS_TASK_ABORT`。Hook JSON 已损坏、scope_guard 无法启动或目标无法安全
+未知副作用和越界路径继续 `HARNESS_TASK_ABORT`。Hook JSON 已损坏时可在同一动作内以更小载荷重试；
+scope_guard 无法启动或目标无法安全
 推导时不存在内层恢复能力，必须由人在 hook 外修复。
 
 动态策略面遵循生命周期：state 与 skill 树始终需要确认；active spec 动态需要确认；未激活 spec

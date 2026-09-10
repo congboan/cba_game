@@ -22,4 +22,6 @@
 - HandleGameplayEvent 双通道(触发表父链上溯+委托广播)；缺口=Row 无法声明触发 → B 方案必做(RespondToTags+Router 反查直激去重)
 - N5 AssetTags 同批必做；N7 选双端对称 Give 契约(Spec.SourceObject 不复制)
 - 队列：X-1 更名迁移 / X-2' 冷却片 getter 收敛(顺带灭 A1 平行容器) / B1 / B2；待拍板：B3 ToJson、A2 尾奏上浮
-- 平台缺陷：Agent 工具无专用 adapter(subagent 派发被拒)；build_editor 成功态偶发误抛 exit6
+- Agent spawn 真因=客户端 stdin 截断(column 430)→abort，非「无 adapter」；已补入
+  no-modeled-effects，子 agent 调用实测受全局 PreToolUse 约束（2026-09-10 探针实证）
+- build_editor 成功态偶发误抛 exit6

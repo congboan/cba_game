@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import io
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -840,9 +841,15 @@ def _script_public_context(ctx: dict) -> dict:
             "confidence",
             "event",
             "data",
+            "agent_type",
+            "agent_id",
         )
     }
     result["path"] = result.get("path") or ""
+    result["agent_type"] = result.get("agent_type") or ""
+    result["agent_id"] = result.get("agent_id") or ""
+    result["active_spec_file"] = str(ctx.get("_active_spec_file") or "")
+    result["repo_root"] = REPO_ROOT
     return result
 
 
@@ -875,8 +882,13 @@ def _eval_script(data: dict, ctx: dict) -> str | None:
 
     ctx["data"] = data  # 透传约束 data 给 skill 脚本（机制封闭、数据开放）
 
+    # ASCII-safe JSON: the gate child decodes its own stdin with the process
+    # ANSI codec, so raw non-ASCII content here would be mangled exactly the way
+    # the hook payload was (drift + swallowed structural bytes). \uXXXX escapes
+    # keep the document byte-exact under any 8-bit codec while json.loads in the
+    # child still yields the identical str.
     payload = json.dumps(
-        _script_public_context(ctx), ensure_ascii=False)
+        _script_public_context(ctx), ensure_ascii=True)
     try:
         completed = subprocess.run(
             [sys.executable, "-I", "-B", script_path],
@@ -2348,6 +2360,9 @@ def evaluate(event: str, ctx: dict, instances: list[dict], task_context: dict) -
                 evaluator_ctx = dict(ctx)
                 if evaluator == "script":
                     evaluator_ctx["_constraint_instance"] = inst
+                    evaluator_ctx["_active_spec_file"] = str(
+                        (task_context.get("active_spec") or {}).get(
+                            "source_file") or "")
                 else:
                     evaluator_ctx["_active_skill_set"] = set(
                         task_context.get("active_skill_set", set()))
@@ -2446,6 +2461,30 @@ def _hook_protocol_failure_report(error: _HookProtocolError, event: str,
     }
 
 
+def _read_hook_stdin() -> str:
+    """Read the hook payload from stdin as raw bytes, then decode explicitly.
+
+    The client writes JSON.stringify(payload) as UTF-8. Reading it through the
+    sys.stdin text stream decodes those bytes with the process ANSI codec
+    (cp936 on zh-CN Windows), which silently mangles non-ASCII content: the
+    3-byte UTF-8 rhythm drifts against the 2-byte GBK rhythm, bytes that are
+    valid GBK trail bytes (such as the backslash of an escaped quote) are
+    swallowed without raising, and the JSON breaks mid-payload. Decode the
+    bytes explicitly instead, and fail closed when neither codec applies.
+    """
+    raw_bytes = sys.stdin.buffer.read()
+    try:
+        return raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    try:
+        return raw_bytes.decode(locale.getpreferredencoding(False))
+    except UnicodeDecodeError as exc:
+        raise _HookProtocolError(
+            "hook_payload.decode_failed",
+            "hook stdin 无法按 UTF-8 或本地编码解码：%s" % (exc,))
+
+
 def _parse_workbuddy_hook_payload(
         raw: str, event: str = "pre_tool") -> tuple[dict, dict | None]:
     """解析通用 WorkBuddy PreToolUse envelope；已知工具再使用专用 adapter。"""
@@ -2492,6 +2531,12 @@ def _parse_workbuddy_hook_payload(
             "tool_kind": tool_kind,
             "tool_input": tool_input,
         }
+        # 调用者身份：主 agent 为 "cli"，subagent 为其类型（如 "general-purpose"）。
+        for identity_field in ("agent_type", "agent_id"):
+            identity_value = payload.get(identity_field)
+            if (isinstance(identity_value, str)
+                    and identity_value.strip()):
+                ctx[identity_field] = identity_value.strip()
         cwd = payload.get("cwd")
         if cwd is not None:
             if (not isinstance(cwd, str)
@@ -3834,7 +3879,7 @@ def main() -> int:
                 "governance_context_loading")
         else:
             hook_ctx, hook_protocol_report = _parse_workbuddy_hook_payload(
-                sys.stdin.read())
+                _read_hook_stdin())
             if hook_protocol_report:
                 result = _hook_protocol_failure_result(
                     hook_protocol_report)

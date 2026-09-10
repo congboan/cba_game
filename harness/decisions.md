@@ -6,6 +6,163 @@
 
 ---
 
+## 2026-09-10 · hook stdin 按 UTF-8 字节解码；gate 通道发 ASCII-safe JSON
+
+**背景**：长期记录为「WorkBuddy 客户端 stdin 序列化截断」，规避手段是一律分段小写入。
+用户质疑后复核，插桩抓到失败载荷原文，实为 harness 侧解码缺陷。
+
+**根因**：`scope_guard.py` 用 `sys.stdin.read()` 读 hook 载荷，文本流按进程 ANSI 编码
+（zh-CN 下 cp936）解码客户端发来的 UTF-8 字节。3 字节 UTF-8 与 2 字节 GBK 节奏错位后：
+落在 <0x40 的字节被替换成 `?`（宽容替换，不抛异常）；落在合法 GBK 尾字节区（如 `\`=0x5C）
+的字节被静默吞掉。吞掉 `\"` 里的 `\` 会让紧跟的 `"` 变成字符串终止符，JSON 从中间断裂 →
+`hook_payload.invalid_json`。纯 ASCII 载荷无错位、不受影响，因此与长度无关
+（约 11KB 纯 ASCII 载荷通过即为反证）。
+
+**物证**：失败载荷原文 936 字符 / 1197 UTF-8 字节 / 0 个 U+FFFD；`content` 是原始中文的
+UTF-8 字节按 GBK 解出的乱码，且首尾结构完整 → **不是截断**。客户端侧
+`JSON.stringify(payload)` + `stdin.write` 无 slice、无长度上限，方向始终干净。
+
+**决策**：
+
+1. 新增 `_read_hook_stdin()`：读 `sys.stdin.buffer` 后按 `utf-8-sig` 显式解码，失败回退
+   locale 编码，两者皆失败 fail-closed 报 `hook_payload.decode_failed`；替换原
+   `sys.stdin.read()`。禁止用 `errors="replace"`：门禁证据不得静默损坏。
+2. `_eval_script()` 的 ctx JSON 改 `ensure_ascii=True`。gate 子进程各自按自己的 locale
+   解码 stdin，ASCII-safe 文档在任意 8-bit 编码下逐字节无损，一处覆盖全部 skill-owned
+   `checks/` 脚本，无需逐个改动。
+
+**替代关系**：推翻 2026-08-13「截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内
+修复」与 2026-09-10「序列化截断是客户端 bug」的归因；abort 分级策略本身保留。
+
+**边界**：不引入客户端协议假设（UTF-8 是 JSON 与 Node 的既有事实）；gate 脚本协议不变
+（仍是 stdin JSON，只是保证 ASCII-safe）；不扩大任何授权，不改 matcher。
+
+**验证**：失败载荷原件重放通过且落盘内容逐字正确；约 700 汉字 Edit 通过（修复前同类稳定 abort）。
+
+---
+
+## 2026-09-10 · 不做「agent_id → 组」动态绑定载体
+
+**背景**：`workflow.parallel.subagent-write-scope` 只做并集约束，不保证组间互斥
+（G-Fragment 的 agent 写进 G-Execution 仍放行）。评估是否引入动态载体补齐。
+
+**决策**：**不做**。
+
+**理由 1**：平台无法可靠绑定。绑定需要「agent_id → 组」，而 `agent_id` 只在 spawn 返回后才知道，
+hook 无反向通道；替代方案只能靠竞态（spawn 后补记）或 subagent 自报（握手写入），前者不确定、
+后者不可信 —— 都不足以支撑机械门禁。
+
+**理由 2**：残差很窄。并集已挡住中枢文件、接口基类、治理源、其它插件；残差仅「写进兄弟组」，
+由 skill 的「逐组核实」审查步骤兜住。
+
+**理由 3**：痛点未出现。本项目尚无真实并行批次；按痛点驱动不动机制。引入可变运行态文件还会
+新增状态损坏／过期泄漏一类失败面，其生命周期规则本身又需独立 ADR。
+
+**零机制替代（今天可用）**：需严格组间隔离时，把批次限定为**单写者**（一次只跑一组），
+此时并集即该组自身，组间互斥自动成立。
+
+**重访触发**（满足任一）：出现「某组 agent 写进兄弟组」的实际事故并被审查发现；或一批必须同时
+跑 ≥2 个目录相邻／重叠的组；或两组需要写同一文件（这本身说明切分违反 P0，应先重切）。
+
+---
+
+## 2026-09-10 · 调用者感知门禁：子 agent 并行写集约束
+
+**决策**：新增约束 `workflow.parallel.subagent-write-scope`（host = `agent-parallel-work`，
+`script` evaluator，`when: pre_write`，默认 `action: deny`）。写集声明挂在 spec frontmatter 的
+`parallel_write_sets`（扁平 glob 列表，`!` 前缀为排除项）。
+
+**harness 透传 4 处**：payload `agent_type`／`agent_id` → hook ctx → 每条求值请求 ctx；
+`evaluate` 对 script 追加 `_active_spec_file`；`_script_public_context` 暴露
+`agent_type`／`agent_id`／`active_spec_file`／`repo_root`。
+
+**语义**：subagent（`agent_type` 非空且 != `cli`）写入必须落在 spec 声明的写集内；主 agent、
+未声明该字段的 spec 一律放行（exit 0）。
+
+**限制**：只做**并集**约束。`agent_id` 在 spawn 返回后才知道且 hook 无反向通道，故无法把具体
+agent 绑定到具体组 → 「组间互斥」仍是认知约束（靠主 agent 的分批计划）；本门禁解决的是
+「子 agent 越出声明区域」（含中枢、接口文件、治理源）。
+
+**生命周期**：随 `agent-parallel-work` 生灭（经 spec 的 `required_skills` 激活）；删该 skill 即
+回收约束、脚本与测试。`agent_type`／`agent_id` 的存在由 2026-09-10 实测确认（见对应 ADR）。
+
+---
+
+## 2026-09-10 · PostToolUse 覆盖子 agent 实测
+
+**实证**（临时痕迹 hook + 对照，探完即拆）：
+- 主 agent `Write` → 痕迹记录 `agent_type:"cli"`
+- subagent `Write` → 痕迹记录 `agent_type:"general-purpose"`、`agent_id:"agent-ed498c44"`
+
+**结论**：PostToolUse **覆盖**子 agent（与 PreToolUse 一致）；payload **含调用者身份**
+（`agent_type`/`agent_id`/`transcript_path`；`session_id` 与主 agent 共享）。
+
+**推论**：官方文档的 payload 字段清单不完整（仅列 6 个），`scope_guard.py` 也只消费其子集 ——
+**两者都不能作为「字段不存在」的依据**。候选：`agent_type` 使调用者感知门禁（例如子 agent
+写集约束）在机制上可行，当前仍属认知约束。
+
+---
+
+## 2026-09-10 · 移除 PostToolUse 自动编译
+
+**决策**：删除 `.codebuddy/settings.json` 的 `PostToolUse` 段。编译改为**主 agent 的显式
+动作**，在一批并行任务结束后触发一次。
+
+**理由 1（粒度错配）**：`build_freshness` 只比对最终源码指纹，触发却是「每次写入」，
+中间 N-1 次编译无证明增益；`AGENTS.md` 已定位自动编译「不是门禁正确性的来源」。
+
+**理由 2（触发入口不具备调用者感知）**：原 `PostToolUse` 无条件触发，matcher 只按工具名
+匹配、不能按 agent 过滤。**（2026-09-10 更正：payload 实际带 `agent_type`/`agent_id`，
+「无调用者身份」的原表述错误，见下条 ADR。）**故 N 个 subagent × M 次写入 =
+N×M 次真实 UBT（2026-08-13 的 skip 仅在上次成功后源码未变时生效，开发中几乎总不匹配）。
+
+**理由 3（无锁并发）**：`build_editor.py` 无并发锁 → 并发写者引发并发 UBT（UHT generated
+文件锁）与证明文件 `Saved/harness_last_build.json` 的 last-writer-wins 竞态，会让
+stop/commit 门禁随机变红。
+
+**边界**：只删触发入口，不改 `build_editor.py` 逻辑与时间预算；`build_freshness` 语义不变
+（仍比对当前源码指纹与上次成功编译）。AI 遗漏编译时由 stop/commit 门禁 fail-closed 拦截。
+
+**替代关系**：取代 2026-07-23「PostToolUse 编译采用原子状态与受管进程树」的触发入口部分
+（原子状态与受管进程树逻辑保留）；2026-08-13 skip 决策的快路径保留但不再被 hook 自动触发。
+
+---
+
+---
+
+## 2026-09-10 · HARNESS_TASK_ABORT 按来源分级
+
+**决策**：不再一律立即结束任务交人处理，按 abort 来源分级：
+
+1. **序列化层**（`hook_payload.invalid_json`）：AI 可自行重试，手段限于缩短载荷。
+
+2. **求值层**（evaluator 失败、provider 冲突、声明损坏、预算耗尽）：维持硬停交人。
+
+**理由**：序列化截断当时被视为客户端 bug（该归因已被 2026-09-10「hook stdin 按 UTF-8 字节
+解码」ADR 推翻），信任边界未被破坏，规避手段确定且不绕门禁。分级策略本身继续有效：
+载荷真的损坏时仍可自行以更小载荷重试同一动作。
+
+**边界**：自恢复只允许同一动作、更小载荷、不换入口、不降级；不得把 deny 当 abort。
+
+---
+
+## 2026-09-10 · Agent 派发补入无建模副作用集合
+
+**决策**：`TOOLS_WITH_NO_MODELED_EFFECTS` 补入 `Agent`。
+
+**理由**：派发动作本身不写仓库；副作用在子 agent 的叶子工具调用上。
+
+**实证**(2026-09-10 探针)：general-purpose 子 agent 写 `Intermediate/probe_pre.txt`
+被 `project.generated.intermediate-readonly` 拒绝，错误文本即该约束 reason 原文；
+写未受约束的 `Saved/probe_post.txt` 成功。子 agent 调用与主 agent 走同一 PreToolUse。
+
+**边界**：不新增授权、不扩大命令白名单；子 agent 每个工具调用仍各自求值。
+
+**后续**：PostToolUse 覆盖子 agent 已于 2026-09-10 实测确认（见对应 ADR）；原「绕过」不再
+必要，移除决策的理由 1（粒度错配）与理由 3（无锁并发）仍成立。
+
+---
+
 ## 2026-08-13 · build_editor 证明有效时跳过 UBT
 
 **决策**：build_editor.py 算完当前指纹后，若上次成功且指纹一致，直接打印 skip 返回 0，不启动 UBT；新增 --force 强制重建。
@@ -34,14 +191,16 @@ tool capability 与 WorkBuddy 原生权限约束。
 ---
 
 
-**决策**：WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化
-会在约 441-797 列截断，产生 hook_payload.invalid_json 与 HARNESS_TASK_ABORT。
-截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内修复或规避。
+## 2026-08-13 · hook stdin 截断产生 invalid_json abort（归因与规避已被 2026-09-10 ADR 推翻）
 
-规避准则（认知约束，非机械门禁）：
+**决策**（**已作废**，保留以记录这次误判）：WorkBuddy PreToolUse hook 对长 Write/Edit
+payload 的 stdin JSON 序列化会在约 441-797 列截断，产生 hook_payload.invalid_json 与
+HARNESS_TASK_ABORT。截断发生在 scope_guard 收到 stdin 之前，harness 无法在机制内修复或规避。
+
+规避准则（**已作废**：缺陷在 harness 的 stdin 解码，2026-09-10 已修复，不再需要分段小写入）：
 - 长文件写入/编辑用分段小操作，每段 payload 控制在约 200 字符内；
 - 命令行避免长中文参数（UTF-8 多字节加剧截断），改用短参数或从文件读；
-- 触发 invalid_json abort 后不得降级放行或换未适配入口绕过，按既有协议交回。
+- 触发 invalid_json abort 后，按 2026-09-10 分级可用更小载荷自行重试；不得降级放行或换未适配入口绕过。
 
 **理由**：hook stdin 是治理门禁的信任边界（见 2026-07-23 协议错误 ADR）。
 客户端序列化截断属于公共 envelope 损坏，abort 语义正确且必须保留。

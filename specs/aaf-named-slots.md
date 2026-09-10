@@ -6,6 +6,13 @@ required_tool_capabilities: []
 status: confirmed
 created: "2026-08-27"
 constraints: []
+parallel_write_sets:
+  - "Plugins/AssemblyAbilityFramework/Source/**/AbilityData/Fragment/**"
+  - "Plugins/AssemblyAbilityFramework/Source/**/AbilityData/Execution/**"
+  - "Plugins/AssemblyAbilityFramework/Source/**/AbilityData/Context/**"
+  - "Plugins/AssemblyAbilityFramework/Source/**/AbilityData/Validation/**"
+  - "!**/FAssemblyFragmentBase.*"
+  - "!**/FAssemblyExecutionBase.*"
 ---
 
 # AAF 加固与具名插槽第一阶段

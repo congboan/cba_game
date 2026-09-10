@@ -226,7 +226,10 @@ POWERSHELL_SWITCHES = {
 # 官方说明这些 WorkBuddy 工具的当前调用不直接产生现有 evaluator 关心的
 # repository pre_write / raw pre_command / git pre_commit 证据。它们仍产生
 # pre_tool 请求，仍受动态 tool capability 约束和 WorkBuddy 原生权限控制。
+# Agent(subagent 派发)：派发动作本身不写仓库；子 agent 的工具调用经实测同样
+# 受全局 PreToolUse 约束（决策见 decisions.md 2026-09-10）。
 TOOLS_WITH_NO_MODELED_EFFECTS = {
+    "Agent",
     "AskUserQuestion",
     "EnterPlanMode",
     "ExitPlanMode",
@@ -530,6 +533,9 @@ def _finalize_analysis(analysis: dict, ctx: dict, repo_root: str,
         request_ctx = request.setdefault("ctx", {})
         request_ctx["tool_capabilities"] = capabilities
         request_ctx["tool_provider_ids"] = provider_ids
+        for identity_field in ("agent_type", "agent_id"):
+            if ctx.get(identity_field):
+                request_ctx[identity_field] = ctx[identity_field]
 
     unresolved = list(analysis.get("unresolved_events") or [])
     if provider:
