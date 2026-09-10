@@ -12,8 +12,9 @@ constraints:
 
 ## 平台硬约束（先读：违反会 abort 或返工）
 
-1. **prompt 极短**：hook stdin 约 430 列截断。prompt 用 ASCII、约 150 字符内；完整上下文
-   由文件/spec 传递，禁止贴规范正文。
+1. **prompt 极短**：完整上下文
+   由文件/spec 传递，禁止贴规范正文；短 prompt 亦降低上下文占用。
+   （原「hook stdin 430 列截断」归因已作废，见 ADR 2026-09-10）
 2. **批末编译**：PostToolUse 自动编译已移除（ADR 2026-09-10）。一批全部结束后，由主 agent
    显式跑一次 `build_editor.py`；编译责任不下放给 subagent。
 3. **写集互斥**：并行组之间写集两两不交，含同一文件的不同部分。
