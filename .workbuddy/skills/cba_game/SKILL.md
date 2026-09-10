@@ -4,7 +4,7 @@ description: cba_game project root skill
 required_tool_capabilities: []
 tool_providers:
   - id: ue5-editor-mcp
-    tool_glob: "mcp__ue5__call_tool"
+    tool_glob: "mcp__ue5__*"
     capabilities:
       - ue.asset.edit
     effects:
@@ -307,6 +307,19 @@ WorkBuddy PreToolUse hook 对长 Write/Edit payload 的 stdin JSON 序列化会�
 - `editor_toolset.ObjectTools`：list/get/set_properties 设置任意对象属性
 - 编辑器运行期间引擎 dll 被占用 → 编译 LNK1104 失败；MCP 工作流与编译门禁互斥：用 MCP 时避免触发编译，编译前先关编辑器
 
+### MCP 工具参数命名转换（2026-09-10 源码校准）
+
+C++ toolset 的 `UFUNCTION` 参数暴露给 AI 时会经 `FJsonObjectConverter::StandardizeCase`
+转换：**PascalCase → camelCase**。
+
+- 源码写 `const FString& AssetPath` → AI 侧 schema 是 `assetPath`（同理 `CollectionName` → `collectionName`）
+- Python toolset（`@toolset_registry.tool_call`）不经过该转换，保持 snake_case（`asset_path` / `file_path`）
+- 工具调用参数是 `{"toolset_name", "tool_name", "arguments": {...}}` 结构：C++ toolset 的资产路径参数是
+  `arguments.assetPath`，Python toolset 是 `arguments.asset_path`
+- 上述字段路径是 `tool_providers` 中 `pre_write.path_field` 的写法依据
+- 依据：`Engine/Plugins/Experimental/ToolsetRegistry/Source/ToolsetRegistry/Private/Tests/ToolsetJsonConverterTest.cpp`（StandardizeCase）；
+  `Engine/Plugins/Experimental/ModelContextProtocol/Source/ModelContextProtocolEditor/Private/ModelContextProtocolToolSearch.cpp`（call_tool schema）
+
 ## 架构约束（用户确认 2026-08-10）
 
 `UGameUIManagerSubsystem` / `UCommonGameInstance` 等全局宿主不进 GameFeature 插件，放 `Source/cba_game/**`。
@@ -317,3 +330,11 @@ GameFeature 是"可插拔加载单元"，不存在固定组成模板：核心 = 
 - GameFeatureAction = 激活/停用时的行为钩子（挂组件/注输入/弹 UI）；无 Action 的 GameFeature 完全合法
 - 验证 GameFeature = 加载/激活状态，不依赖 Actor/控制台命令等样板
 - 测试插件（如 GFTests）是通用测试宿主：内容按被测对象决定，禁止套用"Actor + Action + 命令"模板
+
+## 相机系统选型（用户确认 2026-09-07）
+
+本项目相机系统统一使用 UE5 GameplayCameras 插件，不采用 Lyra 式 CameraComponent + CameraMode 栈。
+
+- 涉及相机的一切操作（视角驱动、CameraRig/BoomArm、评估数据消费）都以 GameplayCameras 为唯一相机系统。
+- 当前落点：插件尚未在 cba_game.uproject 启用、项目内无相机代码；首次做相机功能时先启用插件。
+- HeroComponent 暂不实现；后续需要时按本选型重新界定其职责边界。
