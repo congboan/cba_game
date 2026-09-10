@@ -222,6 +222,8 @@ harness 的 `operation_normalizer.py` 只能静态解析**纯命令**。复合�
 - `.workbuddy/`（memory/skills）在 git add/commit 后曾整体消失，靠 `git restore` 救回，根因已确认：用户误删（2026-08-13 用户确认），非 junction 问题。
 - **禁止**对 `.workbuddy/` 执行破坏性 git 操作：`git clean`、`git checkout -- .workbuddy`（除非明确要恢复）、`git reset --hard` 等；优先用 `git restore <具体文件>` 精确恢复。
 - 涉及 `.workbuddy/` 的 `git add -A` / commit 前，先 `git status --short` 审查改动清单，确认没有意外删除/替换。
+- **`git status` 只显示文件名**：`git add <目录>` 前必须 `git diff` 确认 hunk 归属。
+  否则会连同他人未提交改动一起提交（2026-09-10 亲历：另一会话的 stdin 修复被卷进提交）。
 - 若 root skill 再次 missing，按 `harness/README.md` 恢复协议：`git ls-files .workbuddy/` 确认索引完整 → `git restore .workbuddy/` 恢复 → `scope_guard.py --context` 验证。
 
 ## 编辑载荷（2026-09-10 后）
