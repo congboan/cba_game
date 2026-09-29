@@ -1,1 +1,25 @@
-{"FileVersion": 3, "FriendlyName": "GFTests", "Version": 1, "BuiltInInitialFeatureState": "Installed", "Modules": [{"Name": "GFTests", "Type": "Runtime", "LoadingPhase": "Default"}]}
+{
+	"FileVersion": 3,
+	"FriendlyName": "GFTests",
+	"Version": 1,
+	"BuiltInInitialFeatureState": "Loaded",
+	"Modules": [
+		{
+			"Name": "GFTests",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"VersionName": "",
+	"Description": "",
+	"Category": "",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false
+}
