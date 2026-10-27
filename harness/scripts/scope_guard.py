@@ -124,6 +124,7 @@ EVALUATOR_DATA_SCHEMA = {
         {"skill", "path_patterns"},
         {"skill", "path_patterns", "exempt_patterns"}),
     "script": ({"script"}, None),  # 允许约束声明任意自定义 data 字段透传给脚本
+    "retry_pending": (set(), {"min_attempts", "stale_seconds"}),
 }
 
 WORKBUDDY_TOOL_KINDS = {
@@ -777,6 +778,52 @@ def _eval_require_active_skill(data: dict, ctx: dict) -> str | None:
     return None
 
 
+def _selector_probe_paths(relative: str) -> tuple[str, ...]:
+    """同一目标在相对/绝对两种声明形态下的探测串，避免漏判。"""
+    absolute_root = REPO_ROOT.replace("\\", "/").rstrip("/")
+    return (relative, f"{absolute_root}/{relative}")
+
+
+def _validate_selector_not_self_locked(
+        path_patterns: tuple[str, ...],
+        exempt_patterns: tuple[str, ...],
+        source_file: str,
+        *, host_type: str, host_id: str) -> list[dict]:
+    """authoring 前置条件不得闭锁 task selector 的来源与维护通道。
+
+    spec 是 selector 的唯一来源（`active_spec` → `required_skills`），
+    `harness/state/harness_state.json` 是它唯一的维护入口。任一处被
+    `require_active_skill` 覆盖、又要求 authoring 已激活，都会闭合成
+    「要激活才能写、要写才能激活」的自举死锁，实际只剩下手改 state 这一条后门
+    （2026-10-28 ADR）。
+    """
+    diagnostics: list[dict] = []
+
+    spec_probes = _selector_probe_paths("specs/__selector_probe__.md")
+    if any(_glob_match(pattern, probe)
+           for pattern in path_patterns for probe in spec_probes):
+        diagnostics.append(_diagnostic(
+            "error", "constraint.authoring_selector_self_lock",
+            "require_active_skill.path_patterns 不得覆盖 specs/**：spec 是 task "
+            "selector 的唯一来源，把它做成 authoring 前置条件会闭合成自举死锁；"
+            "spec 的闸门是 governance plane 的逐次 ask，不是机制前置条件",
+            source_file, host_type=host_type, host_id=host_id))
+
+    state_probes = _selector_probe_paths("harness/state/harness_state.json")
+    covers_state = any(_glob_match(pattern, probe)
+                       for pattern in path_patterns for probe in state_probes)
+    exempts_state = any(_glob_match(pattern, probe)
+                        for pattern in exempt_patterns for probe in state_probes)
+    if covers_state and not exempts_state:
+        diagnostics.append(_diagnostic(
+            "error", "constraint.authoring_selector_channel_blocked",
+            "require_active_skill 覆盖 harness/state/harness_state.json 时必须同时"
+            "列入 exempt_patterns：它是 task selector 的唯一维护入口，闭锁它等于"
+            "切断全部激活通道", source_file,
+            host_type=host_type, host_id=host_id))
+    return diagnostics
+
+
 def _owned_script_path(inst: dict, data: dict,
                        *, require_exists: bool) -> tuple[str, str]:
     """解析 skill 自有 Python 门禁脚本；禁止 spec、绝对路径、越界和外部 symlink。"""
@@ -933,6 +980,116 @@ def _eval_script(data: dict, ctx: dict) -> str | None:
         f"skill 门禁脚本协议失败，exit={completed.returncode}{suffix}")
 
 
+# ════════════════════════════════════════════════════════════════════
+#  未消化拒绝的记账（stop 时机的强制重试门禁）
+# ════════════════════════════════════════════════════════════════════
+#
+# 背景：unresolved 拒绝的 reason 已经写明"必须改写重试"，但调用方收到后仍可能
+# 直接向用户解释并结束回合 —— 文本约束不了行为（2026-10-25 连续实测）。记账把
+# "还没改写就想收工"变成一次真实的 stop deny，让机制而不是自觉来保证重试。
+#
+# 边界：记账失败不改变任何裁决；过期条目自动清理；attempts 达到下限即放行 ——
+# "确实无路可走"必须允许收工，否则会把调用方困死在死循环里。
+
+RETRY_PENDING_PATH = os.path.join(
+    REPO_ROOT, "Saved", "harness_retry_pending.json")
+_RETRY_PENDING_MIN_ATTEMPTS = 2
+_RETRY_PENDING_STALE_SECONDS = 1800
+
+
+def _retry_pending_agent(ctx: dict) -> str:
+    return str(ctx.get("agent_type") or ctx.get("agent_id") or "cli")
+
+
+def _retry_pending_read() -> dict:
+    try:
+        with open(RETRY_PENDING_PATH, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _retry_pending_write(data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(RETRY_PENDING_PATH), exist_ok=True)
+        temp = RETRY_PENDING_PATH + ".tmp"
+        with open(temp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+        os.replace(temp, RETRY_PENDING_PATH)
+    except OSError:
+        # 记账是 stop 门禁的输入，不是当前调用的裁决依据：写不进去只意味着
+        # 这一轮少了 stop 保护，不能让当前调用因此失败。
+        pass
+
+
+def _record_retry_pending(hook_ctx: dict, evidence: list[str],
+                          tool_name: str) -> None:
+    """记录一次 unresolved 拒绝。同一 agent + 同一证据才累加 attempts。"""
+    agent = _retry_pending_agent(hook_ctx or {})
+    code = next((str(item) for item in evidence if str(item)), "")
+    data = _retry_pending_read()
+    previous = data.get(agent)
+    same = (isinstance(previous, dict)
+            and previous.get("code") == code
+            and previous.get("tool") == tool_name)
+    data[agent] = {
+        "code": code,
+        "tool": tool_name,
+        "attempts": (int(previous.get("attempts") or 0) + 1) if same else 1,
+        "ts": int(time.time()),
+    }
+    _retry_pending_write(data)
+
+
+def _clear_retry_pending(hook_ctx: dict) -> None:
+    """出现过可放行的调用，说明调用方已经改写到可行形态。"""
+    agent = _retry_pending_agent(hook_ctx or {})
+    data = _retry_pending_read()
+    if agent not in data:
+        return
+    data.pop(agent, None)
+    _retry_pending_write(data)
+
+
+def _eval_retry_pending(data: dict, ctx: dict) -> bool | str:
+    """stop 时机：还有未完成的改写重试时，阻止结束回合。"""
+    entries = _retry_pending_read()
+    if not entries:
+        return False
+    stale = int(data.get("stale_seconds") or _RETRY_PENDING_STALE_SECONDS)
+    minimum = int(data.get("min_attempts") or _RETRY_PENDING_MIN_ATTEMPTS)
+    now = int(time.time())
+    pending: list[str] = []
+    changed = False
+    for agent in list(entries):
+        entry = entries.get(agent)
+        if not isinstance(entry, dict):
+            entries.pop(agent, None)
+            changed = True
+            continue
+        if now - int(entry.get("ts") or 0) > stale:
+            entries.pop(agent, None)
+            changed = True
+            continue
+        attempts = int(entry.get("attempts") or 0)
+        if attempts >= minimum:
+            entries.pop(agent, None)
+            changed = True
+            continue
+        pending.append(
+            f"{agent}: {entry.get('tool')!r} 被拒绝（{entry.get('code')}），"
+            f"attempts={attempts}/{minimum}")
+    if changed:
+        _retry_pending_write(entries)
+    if not pending:
+        return False
+    return (
+        "[HARNESS_RETRY_PENDING] 你收到过 unresolved 拒绝，但还没完成改写重试"
+        "就想结束回合。这不是错误、也不是任务结束：按拒绝信息里的 next_actions"
+        "改写并真正调用一次，成功后本门禁自动解除。未完成项：" + "；".join(pending))
+
+
 # 求值器注册表（封闭枚举；新增类型 = 加函数 + 在此登记）
 EVALUATORS = {
     "build_freshness": _eval_build_freshness,
@@ -943,6 +1100,7 @@ EVALUATORS = {
     "require_tool_capability": _eval_require_tool_capability,
     "require_active_skill": _eval_require_active_skill,
     "script": _eval_script,
+    "retry_pending": _eval_retry_pending,
 }
 
 # 这些 evaluator 的结果只依赖治理状态，不依赖尚未解析出的工具副作用细节。
@@ -2042,10 +2200,15 @@ def _effective_build_proof_files(
             "path": _norm(state_path),
             "constraint_ids": [],
             "sources": [],
+            "whens": {},
         })
         constraint_id = str(inst.get("_constraint_id") or "")
         if constraint_id and constraint_id not in item["constraint_ids"]:
             item["constraint_ids"].append(constraint_id)
+            # 证明文件被多个 build_freshness 约束共用，各自的 when 不同
+            # （pre_commit / stop）。保留声明时机，unresolved 报告才能只在
+            # 该约束真实生效的事件下报告它。
+            item["whens"][constraint_id] = inst.get("when")
         source_file = str(inst.get("_source_file") or "")
         if source_file and source_file not in item["sources"]:
             item["sources"].append(source_file)
@@ -2195,13 +2358,17 @@ def validate_constraints(
                     host_type=host_type, host_id=host_id))
         if evaluator == "require_active_skill" and isinstance(data, dict):
             try:
-                required_skill, _, _ = _require_active_skill_config(data)
+                required_skill, path_patterns, exempt_patterns = (
+                    _require_active_skill_config(data))
             except RuntimeError as error:
                 diagnostics.append(_diagnostic(
                     "error", "constraint.active_skill_data_invalid",
                     str(error), source_file,
                     host_type=host_type, host_id=host_id))
             else:
+                diagnostics.extend(_validate_selector_not_self_locked(
+                    path_patterns, exempt_patterns, source_file,
+                    host_type=host_type, host_id=host_id))
                 try:
                     _resolve_workflow_skill_reference(required_skill)
                 except FileNotFoundError as error:
@@ -2328,9 +2495,13 @@ def _evaluation_budget_failure_result(phase: str) -> dict:
     }
 
 
-def _when_matches(inst: dict, event: str) -> bool:
-    when = inst.get("when")
+def _event_declared(when, event: str) -> bool:
+    """单条 when 声明是否覆盖该事件；列表表示多事件生效。"""
     return event in when if isinstance(when, list) else when == event
+
+
+def _when_matches(inst: dict, event: str) -> bool:
+    return _event_declared(inst.get("when"), event)
 
 
 def evaluate(event: str, ctx: dict, instances: list[dict], task_context: dict) -> dict:
@@ -2516,14 +2687,35 @@ def _parse_workbuddy_hook_payload(
             raise _HookProtocolError(
                 "hook_payload.tool_input_invalid",
                 "tool_input 必须是对象")
-        # DeferExecuteTool 代理：还原内层 MCP 工具名与参数（仅 ue5-editor MCP）。
+        # DeferExecuteTool 代理：还原内层工具名与参数。
+        # 不锁死 server 前缀：改名（ue5 -> ue-editor）不该让已声明的 provider 失效。
+        # 不限 mcp__ 前缀：客户端内置元工具（list_installed_plugins / ListMcpResources /
+        # ReadMcpResource 等）同样经此代理转发，限定 mcp__ 会让针对它们声明的 provider
+        # 永远匹配不到，症状是 tool_effects_unresolved:no_effective_provider，而 --context
+        # 仍报 effective:true（2026-10-25 实际踩到）。
+        # 还原不会放宽授权——内层名仍要过 matching_providers，没有有效 provider
+        # 时照样走 unresolved/fail-closed；不还原反而连副作用类别都不可知。
+        # deferred_tool 只作诊断事实记录：拒绝信息必须能区分「内层名没被还原」
+        # 与「provider 真的没声明」，否则调用方只能靠翻源码判断（2026-10-25 踩到）。
+        deferred_tool: dict | None = None
         if tool_name == "DeferExecuteTool":
             inner_name = tool_input.get("toolName")
-            if isinstance(inner_name, str) and inner_name.startswith("mcp__ue5__"):
+            if isinstance(inner_name, str) and inner_name:
                 inner_params = tool_input.get("params")
+                deferred_tool = {
+                    "outer_tool": "DeferExecuteTool",
+                    "inner_tool": inner_name,
+                    "restored": True,
+                }
                 tool_name = inner_name
                 if isinstance(inner_params, dict):
                     tool_input = inner_params
+            else:
+                deferred_tool = {
+                    "outer_tool": "DeferExecuteTool",
+                    "inner_tool": "",
+                    "restored": False,
+                }
         tool_kind = WORKBUDDY_TOOL_KINDS.get(tool_name, "generic")
 
         ctx: dict = {
@@ -2531,6 +2723,8 @@ def _parse_workbuddy_hook_payload(
             "tool_kind": tool_kind,
             "tool_input": tool_input,
         }
+        if deferred_tool:
+            ctx["deferred_tool"] = deferred_tool
         # 调用者身份：主 agent 为 "cli"，subagent 为其类型（如 "general-purpose"）。
         for identity_field in ("agent_type", "agent_id"):
             identity_value = payload.get(identity_field)
@@ -2654,24 +2848,236 @@ def _tool_adapter_failure_result(
     }
 
 
+# evidence 码对应的可执行改写指引。只影响 reason 文本，不参与裁决，
+# 也不放宽任何路径：调用方看到的仍是同一份 blocker 集合。
+_EVIDENCE_HINTS = {
+    "python_effects_unresolved": (
+        "python -c / -m 无法静态归一化；把逻辑写成脚本文件，"
+        "只读脚本用 harness/scripts/run_readonly.py 执行。"),
+    "python_script_effects_unresolved": (
+        "未登记的 Python 脚本无法静态归一化；只读分析脚本改用 "
+        "harness/scripts/run_readonly.py 包装（运行时强制只读），"
+        "需要写副作用时改走结构化 Write/Edit 工具。"),
+    "command_effects_unresolved": (
+        "首程序未适配，或命令含复合/重定向语法；拆成单条纯命令，"
+        "或改用 Read / Grep / Glob 等结构化工具。"),
+    "tool_effects_unresolved": (
+        "该工具没有匹配到任何 effective tool_provider，其副作用无法被证明；"
+        "换用已适配的工具，或由该工具所属 root/workflow/spec 声明 "
+        "tool_providers。这是可恢复的选路问题，不是任务终止信号。"),
+}
+
+
+def _evidence_hint(evidence: list[str]) -> str:
+    for item in evidence:
+        hint = _EVIDENCE_HINTS.get(str(item).split(":", 1)[0])
+        if hint:
+            return hint
+    return ""
+
+
+# provider 清单内联上限。拒绝原因是"没有 provider 能解释这个工具"，把候选
+# tool_glob 一并列出，调用方才能自己看出"声明了但没匹配上"与"根本没声明"的差别；
+# 超过上限时截断，完整清单仍在 operation_report.provider_candidates。
+_PROVIDER_LIST_INLINE_LIMIT = 5
+
+
+def _unresolved_next_actions(evidence: list[str], deferred: dict,
+                             observed_tool: str) -> tuple[list[str], str]:
+    """把证据码翻译成可以直接照做的改写动作，并给用户一句人话。
+
+    这些是**改写路径**，不是授权：每条都仍要重新过完整求值。unresolved 是
+    可恢复选路问题，但只有落到具体形态，调用方才不会停在原地等指示。
+
+    分档依据只能是可观测事实（是否经代理转发、内层名是否还原出来），不能靠
+    硬编码"哪些是客户端只读工具"——客户端工具集合是客户端事实，不进机制。
+    分档的差别很关键：机制缺口要"报告"，治理缺口要"声明"，两者都别拿
+    结构化读取工具去冒充原工具的能力。
+    """
+    codes = {str(item).split(":", 1)[0] for item in evidence}
+    actions: list[str] = []
+    inner = str(deferred.get("inner_tool") or "")
+    user_message = (
+        f"本次工具调用被治理层拦截，原因是无法判定 {observed_tool!r} 的副作用。"
+        f"这不是你的操作错误，也不需要你修改配置。")
+    if "tool_effects_unresolved" in codes:
+        if deferred and not deferred.get("restored"):
+            actions.append(
+                f"代理外壳 {deferred.get('outer_tool')!r} 的内层工具名没取到，"
+                f"属 harness 归一化缺口；报告该缺口后停止，"
+                f"不要改 provider、也不要换未登记入口绕行")
+            user_message = (
+                f"本次拦截源于治理层的归一化缺口（代理外壳未能识别内层工具），"
+                f"不是你的操作，也不是 AI 用错了工具。AI 会把这个缺口报告出来。")
+        elif deferred and inner and inner != observed_tool:
+            actions.append(
+                f"内层工具 {inner!r} 已还原但没有成为匹配用的 tool_name，"
+                f"属 harness 侧缺陷；报告该缺口，不要改 provider")
+            user_message = (
+                f"本次拦截源于治理层的还原缺陷，不是你的操作。AI 会报告该缺口。")
+        elif deferred:
+            actions.append(
+                f"{observed_tool!r} 是客户端 deferred 工具，本项目尚未声明 provider。"
+                f"任务确实需要它时这是**治理变更**：在 root skill 或对应 workflow "
+                f"skill 的 tool_providers 中声明 tool_glob={observed_tool!r}，"
+                f"并先确认其副作用可被证明（只读工具声明 effects: [] / "
+                f"unresolved_events: []），然后重试")
+            actions.append(
+                f"任务不依赖它时，直接放弃该工具，用已登记入口完成任务；"
+                f"不得用 Read/Grep 冒充它本该返回的结果")
+            user_message = (
+                f"{observed_tool!r} 还没有在项目治理层登记，所以本次调用被拦。"
+                f"如果你的任务确实需要它，这需要一次治理变更（补 provider 声明）；"
+                f"否则 AI 会换用其他入口继续。")
+        else:
+            actions.append(
+                f"{observed_tool!r} 未登记 provider，且不是代理转发。"
+                f"要么在所属 root/workflow skill 声明 tool_providers，"
+                f"要么改用已登记入口")
+            actions.append(
+                f"不得用功能不等价的工具冒充其能力（例如用 Grep 冒充检索）")
+            user_message = (
+                f"工具 {observed_tool!r} 尚未登记到项目治理层，本次调用被拦。"
+                f"若任务需要它，需先做一次治理变更。")
+    if ("python_effects_unresolved" in codes
+            or "python_script_effects_unresolved" in codes):
+        # 只给"用 run_readonly"而不给形态，等于把调用方推回 python -c：
+        # 知道工具名却不知道参数约定时，人会退回熟悉的错误写法（2026-10-25 实测）。
+        actions.append(
+            "只读分析：先把逻辑写成 .py 文件，再按此形态执行——"
+            "`python harness/scripts/run_readonly.py <脚本路径> [args...]`"
+            "（wrapper 在审计钩子下运行，任何写副作用会被拒绝；"
+            "不要用 python -c / python -m）")
+        actions.append(
+            "需要写副作用：不要包 run_readonly，直接用结构化 Write / Edit")
+        user_message = (
+            f"本次拦截是因为内联 Python 无法被静态判定副作用。"
+            f"AI 会改写为可审计的形态后重试，不需要你处理。")
+    if "command_effects_unresolved" in codes:
+        actions.append(
+            "拆成单条纯命令（去掉 & | > 等管道、重定向、命令拼接），"
+            "或改用 Read / Grep / Glob")
+    if not actions:
+        actions.append("按 hint 指出的形态改写本次调用后立即重试")
+    actions.append(
+        "只有在 2-3 种改写形态都实际尝试过并被拒之后，才允许向用户汇报并停止；"
+        "在此之前输出解释、结束回合都算未完成，stop 门禁会拦；"
+        "任何情况下都不得换未适配入口绕过")
+    return (
+        [f"- next_actions[{index + 1}]: {text}"
+         for index, text in enumerate(actions)],
+        user_message,
+    )
+
+
 def _operation_unresolved_result(analysis: dict,
-                                 blockers: list[dict]) -> dict:
+                                 blockers: list[dict],
+                                 *,
+                                 hook_ctx: dict | None = None,
+                                 providers: list[dict] | None = None) -> dict:
     unresolved_events = analysis.get("unresolved_events", [])
+    evidence = [
+        str(item) for item in (analysis.get("evidence") or []) if str(item)
+    ]
+    ctx = hook_ctx or {}
+    observed_tool = str(
+        analysis.get("source_tool") or ctx.get("tool_name") or "")
+    observed_kind = str(
+        analysis.get("tool_kind") or ctx.get("tool_kind") or "")
+    deferred = ctx.get("deferred_tool") or {}
+    # reason 是调用方唯一能看到的内容。它必须回答三件事：看到了什么（观测事实）、
+    # 差在哪（匹配失败的实际对比）、下一步能照做什么（具体形态）。只给结论标签时
+    # 调用方只能猜测，或者停手等指示 —— 而两者都违背"拒绝用于驱动合规改写"的定位。
+    reason_lines = [
+        "[HARNESS_OPERATION_UNRESOLVED] 本次调用被拒：副作用无法可信归一化。"
+        "这不是错误、也不是任务结束，而是一条必须立刻执行的改写指令 —— "
+        "按 next_actions 改写后在同一回合内重试；重试前不要向用户输出说明，"
+        "解释不能替代执行。stop 时机有门禁校验是否真的重试过。",
+        f"- observed: tool_name={observed_tool!r} tool_kind={observed_kind!r}"
+        f" agent={str(ctx.get('agent_type') or 'cli')!r}",
+        f"- unresolved_events={json.dumps(unresolved_events, ensure_ascii=False)}",
+        f"- evidence={json.dumps(evidence, ensure_ascii=False)}",
+    ]
+    if deferred:
+        reason_lines.append(
+            f"- deferred: outer_tool={deferred.get('outer_tool')!r}"
+            f" inner_tool={deferred.get('inner_tool')!r}"
+            f" restored={bool(deferred.get('restored'))}")
+    provider_views = [
+        {
+            "id": str(item.get("_provider_id") or item.get("id") or ""),
+            "tool_glob": str(item.get("tool_glob") or ""),
+        }
+        for item in (providers or [])
+        if str(item.get("tool_glob") or "")
+    ]
+    no_provider = any(
+        str(item).split(":", 1)[0] == "tool_effects_unresolved"
+        for item in evidence)
+    if no_provider and provider_views:
+        listing = [
+            f"    {view['id']:<28} {view['tool_glob']}"
+            for view in provider_views[:_PROVIDER_LIST_INLINE_LIMIT]
+        ]
+        if len(provider_views) > _PROVIDER_LIST_INLINE_LIMIT:
+            listing.append(
+                f"    … 另有 "
+                f"{len(provider_views) - _PROVIDER_LIST_INLINE_LIMIT} 个，"
+                f"见 operation_report.provider_candidates")
+        reason_lines.append(
+            f"- provider_match: {len(provider_views)} 个有效 provider 均未匹配 "
+            f"{observed_tool!r}\n" + "\n".join(listing))
+        # 反向匹配：内层名本可命中某个 glob，却没有成为匹配用的 tool_name。
+        # 这把"声明写对了但机制没还原"与"provider 真的写错了"当场分开。
+        inner = str(deferred.get("inner_tool") or "")
+        if inner and inner != observed_tool:
+            hits = matching_providers(inner, providers or [])
+            if hits:
+                hit = hits[0]
+                hit_id = str(hit.get("_provider_id") or hit.get("id") or "")
+                reason_lines.append(
+                    f"- self_diagnosis: inner_tool={inner!r} 本可匹配 provider "
+                    f"{hit_id!r}（tool_glob={hit.get('tool_glob')!r}），"
+                    f"但它没有成为匹配用的 tool_name → 疑似 harness 还原/归一化"
+                    f"缺陷，不是 provider 声明错误。不要改动 provider。")
     blocker_ids = [
         str(item.get("constraint_id") or "")
         for item in blockers
         if item.get("constraint_id")
     ]
+    plane_ids = [
+        item for item in blocker_ids
+        if item.startswith("harness.control-plane:")
+        or item.startswith("harness.governance-plane:")
+    ]
+    rule_ids = [item for item in blocker_ids if item not in plane_ids]
+    if plane_ids:
+        # 受保护面是恒定的机械护栏，对任何写操作都在；逐条列路径只会把
+        # "可能触及"渲染成"已经违反"，对只读工具尤其误导。压缩成计数即可。
+        reason_lines.append(
+            f"- guard_planes: {len(plane_ids)} 个受保护面"
+            f"（settings.json / harness/scripts / state / skills）；"
+            f"仅当本次调用可能写入这些路径时才构成阻塞，"
+            f"明细见 operation_report.blocking_constraints")
+    if rule_ids:
+        reason_lines.append(
+            f"- guard_constraints: {len(rule_ids)} 条保守守卫集"
+            f"（因副作用未知而保守列入，非已违反；"
+            f"明细见 operation_report.blocking_constraints）")
+    hint = _evidence_hint(evidence)
+    if hint:
+        reason_lines.append(f"- hint: {hint}")
+    next_action_lines, user_message = _unresolved_next_actions(
+        evidence, deferred, observed_tool)
+    reason_lines.extend(next_action_lines)
+    reason_lines.append(
+        f"- user_message（仅在真正放弃时才转述给用户；现在不要转述，先重试）: "
+        f"{user_message}")
+    # 记账供 stop 时机使用：拒绝本身只拒当前调用，但"没改写就想收工"要被拦。
+    _record_retry_pending(ctx, evidence, observed_tool)
     return {
         "decision": "deny",
-        "reason": (
-            "[HARNESS_OPERATION_UNRESOLVED] 当前工具调用的潜在副作用无法被可信归一化，"
-            "并可能绕过当前有效硬约束；已拒绝本次调用，AI 任务可继续。\n"
-            f"- unresolved_events={json.dumps(unresolved_events, ensure_ascii=False)}\n"
-            f"- blocking_constraints={json.dumps(blocker_ids, ensure_ascii=False)}\n"
-            "请改用具有明确专用 adapter、有效动态 provider 的工具，"
-            "或可静态分析的受控命令。"
-        ),
+        "reason": "\n".join(reason_lines),
         "abort_task": False,
         "error_type": "operation_unresolved",
         "operation_report": {
@@ -2682,16 +3088,44 @@ def _operation_unresolved_result(analysis: dict,
             "source_tool": analysis.get("source_tool", ""),
             "tool_kind": analysis.get("tool_kind", ""),
             "analysis_status": analysis.get("status", "unresolved"),
+            "observed": {
+                "tool_name": observed_tool,
+                "tool_kind": observed_kind,
+                "agent": str(ctx.get("agent_type") or "cli"),
+            },
+            "deferred": deferred,
+            "provider_candidates": provider_views,
             "evidence": analysis.get("evidence", []),
             "unresolved_events": unresolved_events,
             "blocking_constraints": blockers,
+            "next_actions": [
+                line.split("]: ", 1)[-1] for line in next_action_lines],
+            "user_message": user_message,
             "abort_task": False,
             "recovery": (
-                "改用具有明确专用 adapter、有效动态 provider 的工具，"
-                "或可静态分析的受控命令；"
+                "按 next_actions 的形态改写本次调用后立即重试；"
                 "不得换其他未适配入口绕过。"),
         },
     }
+
+
+def _dedupe_blockers(blockers: list[dict]) -> list[dict]:
+    """同一约束在同一事件下只报告一次。
+
+    证明文件保护与 when 匹配可能为同一 constraint_id 各产生一条记录；重复项
+    会让"可能被绕过的约束"清单看起来比实际更严重，也会误导调用方去修一个
+    并不存在的双重违反。
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for item in blockers:
+        key = (str(item.get("constraint_id") or ""),
+               str(item.get("event") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
 
 
 def _proof_state_write_result(request: dict, proof: dict) -> dict:
@@ -2751,16 +3185,23 @@ def _protected_proof_for_request(
 
 
 def _proof_state_unresolved_blockers(
-        protected: dict[str, dict]) -> list[dict]:
+        protected: dict[str, dict], event: str) -> list[dict]:
     blockers: list[dict] = []
     for proof in protected.values():
+        whens = proof.get("whens") or {}
         for constraint_id in proof.get("constraint_ids") or [""]:
+            when = whens.get(constraint_id)
+            # 声明了 when 且不覆盖当前事件时，该约束在本事件下不可能被绕过，
+            # 报告它会制造"某条只在该事件生效的门禁也被触发了"的假象。
+            # when 不可得（历史数据结构）时保守保留。
+            if when is not None and not _event_declared(when, event):
+                continue
             blockers.append({
                 "constraint_id": constraint_id,
                 "evaluator": "build_freshness",
                 "source_file": (
                     (proof.get("sources") or [""])[0]),
-                "event": "pre_write",
+                "event": event,
                 "protected_path": proof.get("path", ""),
                 "mechanism": "proof_state_protection",
             })
@@ -3224,7 +3665,8 @@ def _evaluate_normalized_call(
         all_blockers.extend(blockers)
         if str(event) == "pre_write" and protected_proofs:
             all_blockers.extend(
-                _proof_state_unresolved_blockers(protected_proofs))
+                _proof_state_unresolved_blockers(
+                    protected_proofs, str(event)))
         if str(event) == "pre_write" and control_plane_match is None:
             all_blockers.extend(_control_plane_unresolved_blockers())
         if str(event) == "pre_write" and governance_plane_match is None:
@@ -3232,7 +3674,9 @@ def _evaluate_normalized_call(
                 _governance_plane_unresolved_blockers(
                     governance_targets))
     if all_blockers:
-        return _operation_unresolved_result(analysis, all_blockers)
+        return _operation_unresolved_result(
+            analysis, _dedupe_blockers(all_blockers),
+            hook_ctx=hook_ctx, providers=effective_providers)
     if (deadline_monotonic is not None
             and time.monotonic() >= deadline_monotonic):
         return _evaluation_budget_failure_result(
@@ -3873,6 +4317,7 @@ def main() -> int:
     }
 
     if rest and rest[0] == "--hook-stdin":
+        hook_ctx: dict = {}
         if (gate_deadline is not None
                 and time.monotonic() >= gate_deadline):
             result = _evaluation_budget_failure_result(
@@ -3895,6 +4340,8 @@ def main() -> int:
             sys.stderr.write(str(result.get("reason") or "Harness denied operation") + "\n")
             sys.stderr.flush()
             return 2
+        # 出现了可放行的调用：调用方已改写到可行形态，解除 stop 门禁。
+        _clear_retry_pending(hook_ctx)
         return 0
 
     # 便捷：位置参数 = 文件路径，按当前 event 判定

@@ -111,6 +111,16 @@ GIT_STAGING_SUBCOMMANDS = {
     "add",
 }
 
+# git reset 默认是 mixed/soft：只改 HEAD 与 .git/index，工作区文件内容不变。
+# 允许它，是为了能把一个超大提交拆成多批分别推送（单次推送数 GB 会被远端
+# 中途断开，见 specs/governance-git-batch-push.md）。
+# 但这三个 flag 会改写或丢弃工作区文件，必须继续按 unresolved 拒绝。
+GIT_RESET_DESTRUCTIVE_FLAGS = {
+    "--hard",
+    "--keep",
+    "--merge",
+}
+
 # 写工作区 / 索引的子命令：需要把文件路径参数解析为精确 pre_write 目标。
 GIT_WORKTREE_WRITE_SUBCOMMANDS = {
     "checkout",
@@ -125,7 +135,6 @@ GIT_WORKTREE_UNRESOLVED_SUBCOMMANDS = {
     "merge",
     "mv",
     "rebase",
-    "reset",
     "switch",
     "tag",
 }
@@ -151,6 +160,11 @@ GIT_OPTION_ARGS = {
     "--git-dir",
     "--work-tree",
 }
+
+# 其余全局选项都不带值、不改变仓库范围、不产生写副作用，可直接跳过。
+# 单独成集是为了让 `git --no-pager ...` 这类常见只读调用不再被判 unresolved；
+# GIT_GLOBAL_OPTIONS 只在此派生使用一次，避免出现只声明不生效的死常量。
+GIT_VALUE_FREE_OPTIONS = GIT_GLOBAL_OPTIONS - GIT_OPTION_ARGS
 
 PYTHON_PROGRAMS = {
     "py",
@@ -228,28 +242,46 @@ POWERSHELL_SWITCHES = {
 # pre_tool 请求，仍受动态 tool capability 约束和 WorkBuddy 原生权限控制。
 # Agent(subagent 派发)：派发动作本身不写仓库；子 agent 的工具调用经实测同样
 # 受全局 PreToolUse 约束（决策见 decisions.md 2026-09-10）。
+# 客户端侧无仓库副作用的工具。判定标准即上句：不产生现有 evaluator 关心的
+# repository pre_write / raw pre_command / git pre_commit 证据，且不改变本机
+# 文件系统状态。不能按"效果止于客户端 UI"判定——SendMessage / ChannelTasks 有
+# 跨会话可见副作用，只是不落仓库；按 UI 判定会误收未来的写文件工具
+# （决策见 decisions.md 2026-10-23）。
+# 反面例子 DeferExecuteTool 不得加入：它是代理外壳，内层工具名未还原时真实
+# 副作用未知；还原后的内层名由 matching_providers 重新判定，进白名单等于
+# 给所有 deferred 工具开后门（例如包一层 Bash）。
 TOOLS_WITH_NO_MODELED_EFFECTS = {
     "Agent",
     "AskUserQuestion",
+    "ChannelTasks",
+    "CreateChannel",
+    "CreateColleague",
     "EnterPlanMode",
     "ExitPlanMode",
     "Glob",
     "Grep",
+    "ListColleagues",
     "ListMcpResources",
     "LSP",
+    "MessageColleague",
     "NotebookRead",
     "Read",
     "ReadMcpResource",
+    "SendMessage",
+    "Skill",
+    "SpeakInChannel",
     "StructuredOutput",
     "TaskGet",
     "TaskList",
     "TaskOutput",
+    "TaskStop",
     "TaskCreate",
     "TaskUpdate",
     "ToolSearch",
     "WaitForMcpServers",
     "WebFetch",
     "WebSearch",
+    "present_files",
     "read_me",
     "show_widget",
 }
@@ -606,6 +638,16 @@ def _target_for_transfer(source: str, destination: str,
     return _relative_path(dest_absolute, cwd, repo_root)
 
 
+def _is_regular_file(path: str, cwd: str) -> bool:
+    """参数指向的是否是已存在的普通文件（false 也包括"不存在"与"是目录"）。"""
+    absolute = (path if os.path.isabs(path)
+                else os.path.join(cwd, path))
+    try:
+        return os.path.isfile(absolute)
+    except OSError:
+        return False
+
+
 def _powershell_file_analysis(tokens: list[str], *, tool_name: str,
                               command: str, cwd: str,
                               repo_root: str) -> dict | None:
@@ -796,6 +838,13 @@ def _posix_file_analysis(tokens: list[str], *, tool_name: str,
                 ["pre_write"], ["static_transfer_path_unresolved"])
         destination = args[-1]
         sources = args[:-1]
+        # 文件级 transfer 的副作用是可证明的：源与目标都是静态路径，内容是同一份
+        # 字节（mv 不重写内容，cp 复制同一份内容），因此不需要 unresolved，
+        # 直接交给约束求值——命中 deny 就给出精确原因，没命中就 abstain。
+        # 目录级 transfer 等于"删整棵子树 + 在目标处重建"，目标侧子路径无法逐条
+        # 登记，内容型约束无从求值，仍然保守置 unresolved。
+        # 依据：harness/decisions.md 2026-10-25「文件级 transfer 可证明」。
+        file_only = all(_is_regular_file(source, cwd) for source in sources)
         for source in sources:
             if program in POSIX_MOVE_COMMANDS:
                 requests.append(_request(
@@ -809,7 +858,11 @@ def _posix_file_analysis(tokens: list[str], *, tool_name: str,
                     source, destination, cwd, repo_root),
                 operation=("move" if program in POSIX_MOVE_COMMANDS
                            else "copy"),
-                confidence="partial"))
+                confidence=("exact" if file_only else "partial")))
+        if file_only:
+            return _analysis(
+                tool_name, "command", requests, [],
+                ["static_transfer_file"])
         return _analysis(
             tool_name, "command", requests, ["pre_write"],
             ["static_transfer_content_unresolved"])
@@ -856,6 +909,8 @@ def _python_wrapper_analysis(tokens: list[str], *, tool_name: str,
             "init_root_skill.py",
             "launch_editor.py",
             "resolve_engine.py",
+            "run_editor_job.py",
+            "run_readonly.py",
             "scope_guard.py",
         )
     }
@@ -865,6 +920,15 @@ def _python_wrapper_analysis(tokens: list[str], *, tool_name: str,
             tool_name, "command", requests,
             ["pre_write", "pre_commit"],
             ["python_script_effects_unresolved"])
+    if wrapper == "run_readonly.py":
+        # 只读边界由 wrapper 内的审计钩子在运行时强制，目标脚本本身不需要
+        # 登记；但仍记录目标，便于事后追溯这次到底跑了什么。
+        evidence = [f"trusted_harness_wrapper:{wrapper}"]
+        if len(tokens) >= 3:
+            evidence.append(
+                "readonly_target:"
+                + _relative_path(tokens[2], cwd, repo_root))
+        return _analysis(tool_name, "command", requests, evidence=evidence)
     if wrapper == "init_root_skill.py":
         projects = sorted(
             name for name in os.listdir(repo_root)
@@ -915,10 +979,48 @@ def _pip_analysis(tokens: list[str], *, tool_name: str,
         return _analysis(
             tool_name, "command", requests,
             evidence=["no_modeled_effects:managed_pip"])
+    entry = _load_tool_registry(repo_root).get(str(program).lower())
+    if isinstance(entry, dict):
+        evidence = [f"tools_registry:{program}"]
+        for root in entry.get("write_roots") or []:
+            target = os.path.join(repo_root, str(root))
+            requests.append(_request(
+                "pre_write", tool_name=tool_name, command=command,
+                path=_relative_path(target, cwd, repo_root),
+                operation="write"))
+            evidence.append(f"registry_write_root:{root}")
+        return _analysis(tool_name, "command", requests, evidence=evidence)
     return _analysis(
         tool_name, "command", requests,
         ["pre_write"],
         [f"command_effects_unresolved:{program}"])
+
+
+_TOOL_REGISTRY_CACHE: dict[str, dict] = {}
+
+
+def _load_tool_registry(repo_root: str) -> dict:
+    """读取 harness/tools_registry.json（受信外部工具 → 允许的写根）。
+
+    设计意图：未知程序不等于危险程序。只要它的写入范围被声明得足够窄，
+    就应该允许调用并把范围交给约束求值，而不是一律判 unresolved。
+    新增工具只改 JSON，不改本文件。
+    """
+    path = os.path.join(repo_root, "harness", "tools_registry.json")
+    if path in _TOOL_REGISTRY_CACHE:
+        return _TOOL_REGISTRY_CACHE[path]
+    data: dict = {}
+    try:
+        with open(path, "r", encoding="utf-8") as stream:
+            raw = json.load(stream)
+        if isinstance(raw, dict):
+            data = {str(key).lower(): value
+                    for key, value in raw.items()
+                    if isinstance(value, dict)}
+    except (OSError, ValueError):
+        data = {}
+    _TOOL_REGISTRY_CACHE[path] = data
+    return data
 
 
 def _git_analysis(tokens: list[str], *, tool_name: str,
@@ -940,6 +1042,9 @@ def _git_analysis(tokens: list[str], *, tool_name: str,
                     ["pre_write", "pre_commit"],
                     ["git_option_value_missing"])
             args = args[2:]
+            continue
+        if option in GIT_VALUE_FREE_OPTIONS:
+            args = args[1:]
             continue
         if option.startswith("-c"):
             # 任意配置项，取值必须为 name=value 否则无法静态判定。
@@ -1012,6 +1117,16 @@ def _git_analysis(tokens: list[str], *, tool_name: str,
         return _analysis(
             tool_name, "command", requests,
             evidence=["git_commit"])
+    if subcommand == "reset":
+        # 只允许不改工作区的 reset（mixed / soft / 仅路径）。--hard / --keep /
+        # --merge 会丢弃或改写工作区文件，仍按 unresolved 拒绝。
+        if any(arg.lower() in GIT_RESET_DESTRUCTIVE_FLAGS for arg in args[1:]):
+            return _analysis(
+                tool_name, "command", requests,
+                ["pre_write"], ["git_worktree_effects_unresolved:reset_destructive"])
+        return _analysis(
+            tool_name, "command", requests,
+            evidence=["git_staging:reset"])
     if subcommand in GIT_STAGING_SUBCOMMANDS:
         # git add 只修改暂存区，工作区文件内容不变；提交内容最终由
         # commit 的 pre_commit 求值（build_freshness 等）与人工审查兜底。
@@ -1205,6 +1320,21 @@ def _command_analysis(ctx: dict, repo_root: str) -> dict:
         return _analysis(
             tool_name, "command", [raw_request],
             evidence=[f"no_modeled_effects:{program}"])
+
+    # 受信外部工具：写入范围由 tools_registry.json 的 write_roots 显式声明，
+    # 命中后照常求值约束，而不是把调用判为 unresolved。
+    entry = _load_tool_registry(repo_root).get(str(program or "").lower())
+    if isinstance(entry, dict):
+        scoped = [raw_request]
+        evidence = [f"tools_registry:{program}"]
+        for root in entry.get("write_roots") or []:
+            target = os.path.join(repo_root, str(root))
+            scoped.append(_request(
+                "pre_write", tool_name=tool_name, command=command,
+                path=_relative_path(target, cwd, repo_root),
+                operation="write"))
+            evidence.append(f"registry_write_root:{root}")
+        return _analysis(tool_name, "command", scoped, evidence=evidence)
 
     return _analysis(
         tool_name, "command", [raw_request],

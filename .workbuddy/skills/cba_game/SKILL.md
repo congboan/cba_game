@@ -3,19 +3,78 @@ name: cba_game
 description: cba_game project root skill
 required_tool_capabilities: []
 tool_providers:
-  - id: ue5-editor-mcp
-    tool_glob: "mcp__ue5__*"
+  - id: ue-editor-mcp
+    tool_glob: "mcp__ue-editor__*"
     capabilities:
       - ue.asset.edit
     effects:
       - event: pre_tool
         confidence: partial
-      - event: pre_write
-        operation: write
-        path_field: "arguments.AssetPath"
-        confidence: exact
     unresolved_events:
       - pre_tool
+  # 客户端自带的 MCP/连接器只读诊断工具。它们不碰仓库，但如果不声明 provider，
+  # 调用会被判 tool_effects_unresolved:no_effective_provider 拒绝——结果是
+  # "排查 MCP 是否连上"这件事本身被门禁挡住（2026-10-25 实际踩到两次）。
+  # 声明为无副作用：不产生 evaluation_request，也不留 unresolved。
+  - id: client-mcp-introspect
+    tool_glob: "ListMcpResources"
+    capabilities:
+      - client.mcp.introspect
+    effects: []
+    unresolved_events: []
+  - id: client-mcp-resource-read
+    tool_glob: "ReadMcpResource"
+    capabilities:
+      - client.mcp.introspect
+    effects: []
+    unresolved_events: []
+  - id: client-connector-introspect
+    tool_glob: "list_installed_plugins"
+    capabilities:
+      - client.connector.introspect
+    effects: []
+    unresolved_events: []
+  # ---- 外部 MCP server（2026-10-25 补全）----
+  # 分类判据是「作用对象在哪」，不是「能不能跑通」。详见正文「MCP provider 分类」。
+  # 本机编辑通道：与 ue-editor 同构。声明只解决「未知工具一律拒绝」的选路问题，
+  # 不提供路径级审计——execute_blender_code / render_*_to_path 能写任意本机路径，
+  # harness 拿不到路径证据。已知覆盖缺口，不得描述成已强制。
+  - id: blender-mcp
+    tool_glob: "mcp__blender__*"
+    capabilities: []
+    effects:
+      - event: pre_tool
+        confidence: partial
+    unresolved_events:
+      - pre_tool
+  # 远端服务：作用对象在远端（GitHub / 网盘 / 邮箱 / 云库），不产生本地仓库的
+  # pre_write / pre_command / pre_commit 证据，故 unresolved 为空。
+  # 这**不代表工具无害**——远端副作用在本 harness 求值域之外，没有门禁守着。
+  - id: github-mcp
+    tool_glob: "mcp__github__*"
+    capabilities: []
+    effects: []
+    unresolved_events: []
+  - id: baidu-netdisk-mcp
+    tool_glob: "mcp__baidu-netdisk__*"
+    capabilities: []
+    effects: []
+    unresolved_events: []
+  - id: agent-mail-mcp
+    tool_glob: "mcp__agent-mail__*"
+    capabilities: []
+    effects: []
+    unresolved_events: []
+  - id: space-library-mcp
+    tool_glob: "mcp__space-library__*"
+    capabilities: []
+    effects: []
+    unresolved_events: []
+  - id: genie-baas-mcp
+    tool_glob: "mcp__genie-baas__*"
+    capabilities: []
+    effects: []
+    unresolved_events: []
 constraints:
   - id: project.generated.intermediate-readonly
     evaluator: path_glob
@@ -60,10 +119,17 @@ constraints:
           - ".cc"
           - ".cxx"
           - ".inl"
+          - ".py"
         areas:
           - "Source/"
           - "Plugins/"
+          - "Content/Python/"
     action: deny
+  # specs/** 刻意不在 path_patterns 内（2026-10-28 修复）。spec 草稿本来就属于
+  # governance plane 的 abstain 面，active spec 的每次修改由 governance plane 逐次
+  # ask。spec 是 task selector 的唯一来源，把它做成 authoring 的前置条件会闭合成
+  # 「要激活才能改 spec、要改 spec 才能激活」的自举死锁——两边都写不了，只剩手改
+  # state 这一条后门。spec 的治理闸门是人工逐次确认，不是机制前置条件。
   - id: project.governance.authoring-required
     evaluator: require_active_skill
     when: pre_write
@@ -74,9 +140,11 @@ constraints:
         - ".codebuddy/**"
         - "harness/**"
         - ".workbuddy/skills/**"
-        - "specs/**"
         - ".githooks/**"
         - "Plugins/*/.workbuddy/skills/**"
+      # harness_state.json 是 selector 的唯一维护入口，由 governance plane 逐次 ask
+      # 保护；这里不叠加 authoring 前置条件，否则同样切断激活通道。它的豁免是
+      # 「归另一个平面管」，不是「无人管」。
       exempt_patterns:
         - "harness/state/harness_state.json"
     action: deny
@@ -95,6 +163,17 @@ constraints:
       file: "Saved/harness_last_build.json"
     action: deny
     reason: "no successful build matching current source"
+  # unresolved 拒绝是"改写指令"，但调用方收到后仍可能直接向用户解释就收工。
+  # 这条把"没重试就想结束回合"变成真实 deny；reason 留空让 evaluator 报出
+  # 具体是哪次拒绝、还差几次重试。attempts 达到下限即自动放行。
+  - id: project.governance.retry-pending
+    evaluator: retry_pending
+    when: stop
+    data:
+      min_attempts: 2
+      stale_seconds: 1800
+    action: deny
+    reason: ""
   - id: project.asset.shell-write
     evaluator: command_write
     when: pre_command
@@ -192,7 +271,7 @@ constraints:
     data:
       script: "checks/check_spec_required.py"
       timeout: 10
-      code_paths: ["Source/**", "Plugins/**"]
+      code_paths: ["Source/**", "Plugins/**", "Content/Python/**"]
     action: deny
     reason: "code write blocked: no active spec selected; build a spec first and activate it via state"
 ---
@@ -211,7 +290,13 @@ harness 的 `operation_normalizer.py` 只能静态解析**纯命令**。复合�
 2. **程序与参数都用绝对路径**（python 解释器、脚本、文件路径）。避免依赖 `cwd` 或 PATH 解析。
 3. **需要切换目录时**：不写 `cd ... && ...`，而是用绝对路径直接调用目标（如 `python E:/project/harness/scripts/build_editor.py`），工具的 `cwd` 由工作区上下文提供。
 4. **需要查看输出时**：直接执行命令读取完整输出，不用 `| head` / `2>&1` 截断或重定向（这些是 normalizer 无法解析的复合形式）。
-5. **受信脚本**：`harness/scripts/` 下的 `build_editor.py`、`launch_editor.py`、`scope_guard.py`、`resolve_engine.py`、`init_root_skill.py` 是 normalizer 内置的 `trusted_harness_wrapper`，**必须用纯命令形式调用**（绝对路径 python + 绝对路径脚本）。这样 AI 可以自己重新编译并刷新 `Saved/harness_last_build.json`，无需人工在外部执行。
+5. **受信脚本**：`harness/scripts/` 下的 `build_editor.py`、`launch_editor.py`、`scope_guard.py`、`resolve_engine.py`、`init_root_skill.py`、`run_readonly.py`、`run_editor_job.py` 是 normalizer 内置的 `trusted_harness_wrapper`，**必须用纯命令形式调用**（绝对路径 python + 绝对路径脚本）。这样 AI 可以自己重新编译并刷新 `Saved/harness_last_build.json`，无需人工在外部执行。
+   其中 `run_readonly.py` 是**运行任意只读分析脚本的唯一合法入口**：`python <venv>/python.exe harness/scripts/run_readonly.py <script.py>`。写副作用由脚本内的 `sys.addaudithook` 在运行时拒绝（详见 `harness/README.md`「受信只读执行器」）。直接 `python <script>.py` 或 `python -c` 一律被判 `python_script_effects_unresolved` 拒绝，**不要因此判定环境不可用**，改走本入口。
+   `run_editor_job.py` 是**无人值守执行编辑器内任务**的入口：`--watch <完成标记文件> --timeout <秒>`，编辑器启动后一直存活到标记文件出现，随后自动终止。用于资产导入、批量重导等必须走编辑器进程内 API 的操作；`launch_editor.py` 只做启动烟雾测试，检测到初始化即关闭，不能承载任务。同目录的 `run_readonly.py` 也是受信 wrapper，用法见第 7 条。
+6. **被拒后先读 `evidence`**：`HARNESS_OPERATION_UNRESOLVED` 的 `evidence` 字段直接指出失败的程序或语法（形如 `command_effects_unresolved:sed`、`command_effects_unresolved:compound, redirected, or dynamically expanded command`、`python_script_effects_unresolved`）。按它改写**这一条**命令即可；不要在原写法上反复微调重试，也不要换未适配入口绕过。
+7. **只读分析脚本**：需要扫描目录、解析 `Saved/*.json` 这类聚合分析时，不要直接 `python <script>.py`（`python_script_effects_unresolved`），改用受信只读执行器：
+   `"<绝对路径 python>" "E:/Unreal Projects/cba_game/harness/scripts/run_readonly.py" "<绝对路径 script>"`
+   它在运行时用审计钩子（PEP 578）强制只读：写入型 `open`、删除/改名/建目录、`subprocess` / `os.system`、`ctypes` 调用一律抛 `PermissionError`，脚本无法摘除已装钩子。**只给纯只读脚本用**；脚本自身报错仍返回非零，不等于被放行。
 
 **为什么**：`build_freshness` 门禁（`project.build.stop` / `project.build.pre-commit`）在 Stop / commit 时比对当前源码指纹与上次成功编译指纹。AI 源码变更后需要自行调用 `build_editor.py` 刷新指纹；若调用形式无法被 normalizer 静态识别，harness 无法证明副作用，会拒绝调用，导致门禁无法解除。
 
@@ -294,8 +379,12 @@ hook 通道与 gate 通道的载荷编码已修复；历史「长载荷截断」
    `scope_guard.py --preview-skills`（无依赖时用不带名称形式）→ 修改
    `status: confirmed` → 写 `active_spec: "specs/<id>.md"` → 重新
    `--context` 验证。
-4. 写 `specs/**` 前需激活 `governance-authoring`（见 AGENTS.md 治理任务
-   强制路由）；激活本身通过 state 写入，逐次人工确认。
+4. 写 `specs/**` **不要求** `governance-authoring`（2026-10-28 修复）：spec 草稿属于
+   governance plane 的 abstain 面，active spec 的每次修改由 governance plane 逐次
+   ask。治理任务要进入 authoring workflow 时，把 `governance-authoring` 写进当前
+   active spec 的 `required_skills`——该写入本身就是逐次 ask——然后重跑 `--context`。
+   **不要**再靠清空 `active_spec` 绕路：那条路会把 spec 驱动的 blast radius 一并
+   卸掉，属于历史上死锁的临时出口，现已不需要。
 
 ## 编译失败重试纪律（2026-08-10 治理修复）
 
@@ -321,6 +410,124 @@ C++ toolset 的 `UFUNCTION` 参数暴露给 AI 时会经 `FJsonObjectConverter::
 - 上述字段路径是 `tool_providers` 中 `pre_write.path_field` 的写法依据
 - 依据：`Engine/Plugins/Experimental/ToolsetRegistry/Source/ToolsetRegistry/Private/Tests/ToolsetJsonConverterTest.cpp`（StandardizeCase）；
   `Engine/Plugins/Experimental/ModelContextProtocol/Source/ModelContextProtocolEditor/Private/ModelContextProtocolToolSearch.cpp`（call_tool schema）
+
+### provider 与客户端 server key 的绑定（2026-10-23 修复）
+
+`tool_providers[].tool_glob` 必须按客户端 `~/.workbuddy/mcp.json` 的 **server key** 拼装：
+`mcp__<server-key>__*`。匹配走 `tool_governance.tool_matches`（`fnmatch.fnmatchcase`，区分大小写，
+不认别名）。
+
+server 改名后若不同步改 glob，provider 会整体失效——症状是 MCP 从「受信写入口」退化成「未知工具」：
+
+| 维度 | glob 命中 | glob 不命中 |
+|---|---|---|
+| `unresolved_events` | `[pre_tool]` | `[pre_tool, pre_write, pre_command, pre_commit]` |
+| 裁决 | abstain 放行 | `HARNESS_OPERATION_UNRESOLVED` 拒绝本次调用 |
+
+### MCP provider 分类（2026-10-25 补全）
+
+`.workbuddy/skills/cba_game/SKILL.md` frontmatter 的 `tool_providers` 现在按**作用对象在哪**分类，
+不按「能不能跑通」分类：
+
+| provider | `tool_glob` | effects | unresolved | 定位 |
+|---|---|---|---|---|
+| `ue-editor-mcp` | `mcp__ue-editor__*` | `pre_tool` partial | `[pre_tool]` | 本机编辑通道；capability `ue.asset.edit` |
+| `blender-mcp` | `mcp__blender__*` | `pre_tool` partial | `[pre_tool]` | 本机编辑通道；无 capability 声明 |
+| `github-mcp` | `mcp__github__*` | `[]` | `[]` | 远端仓库 |
+| `baidu-netdisk-mcp` | `mcp__baidu-netdisk__*` | `[]` | `[]` | 远端网盘 |
+| `agent-mail-mcp` | `mcp__agent-mail__*` | `[]` | `[]` | 远端邮箱 |
+| `space-library-mcp` | `mcp__space-library__*` | `[]` | `[]` | 远端云资料库 |
+| `genie-baas-mcp` | `mcp__genie-baas__*` | `[]` | `[]` | 远端云数据库 |
+
+三条必须同时读的边界，缺一条就会把这张表读成假的：
+
+1. **provider 声明不是授权**（`harness/README.md` 不变量 8）。它只把工具从「未知工具」变成
+   「已分类工具」，权限仍交回 WorkBuddy 原生系统。补 provider 不扩大任何写入范围。
+2. **远端类的 `unresolved_events: []` 含义是**「不产生本地仓库 `pre_write` / `pre_command` /
+   `pre_commit` 证据」，**不是「无害」**。`push_files`、发信、`exec_sql` 这些远端起作用的动作
+   在 harness 求值域之外，没有任何门禁守着它们。
+3. **`blender` / `ue-editor` 的 `unresolved: [pre_tool]` 是已知覆盖缺口**：
+   `execute_blender_code`、`call_tool` 都能写任意本机路径，harness 拿不到路径证据。这与 2026-10-23
+   ADR 记录的 ue-editor 缺口同源，**不得描述成已强制**。
+
+**故意没补的两个**（不是遗漏）：
+
+| server | 为什么不补 |
+|---|---|
+| `mcp__sheetagent__*` | `set_cell_range` / `fill_formula` / `run_command` 写**本地**文件，路径来自参数。要补必须按真实字段名声明 `pre_write.path_field` + `operation`；未建模前保持默认拒绝——这里 fail-closed 是正确方向，不是待办噪声 |
+| `mcp__weixinpay__*` | 资金操作，与本项目无关。保留默认拒绝；确需使用时由用户在当前会话内明确授权 |
+
+新增 MCP server 时按同一判据归类：**先问它写的是本地仓库、本机文件，还是远端**，再决定
+`effects` / `unresolved_events`。写不出证据就别声明成 `exact`——「永不命中的虚假精确」比
+unresolved 更难发现。
+
+### 编辑器重启会断开 MCP 连接（2026-10-25）
+
+UE 的 MCP server 跑在**编辑器进程内**（本项目 `ue-editor` → `http://localhost:8000/mcp`）。
+编辑器一关、端点就消失；WorkBuddy **不会自动重连**，于是本会话里
+`ToolSearch "mcp__ue-editor__*"` 查不到任何工具，`ListMcpResources` 也列不到。
+
+必须区分三件事：
+
+- provider 声明 `effective: true` 只证明**治理映射存在**，不证明工具已安装或已连接；
+- 端口可用性不代表客户端已注册。要判端口用 raw socket（`127.0.0.1` 与 `::1` 都测），
+  不要用 urllib——本机注入的代理会把 localhost 请求吞成 502；
+- 工具查不到 ≠ 环境不可用。
+
+**处置顺序**：
+
+1. 会话开始、以及每次重启编辑器后，先用 `ToolSearch` 确认 `mcp__ue-editor__*` 是否存在。
+2. 不存在 → 明确告诉用户在 WorkBuddy 连接器面板重新启用 `ue-editor`；AI 不能自行注册或重连。
+3. 在 MCP 恢复前，编辑器内操作用**不受 MCP 影响的等价通道**：
+   `Saved/dmc_job.json` + `init_unreal.py` 的 ticker，或
+   `harness/scripts/run_editor_job.py --watch <marker> --timeout N`。
+   这两条和 MCP 一样都是"在活着的编辑器进程里跑 Python"，MCP 只是省掉落 job 文件。
+4. 不要因为连不上 MCP 就改用人工手点、让用户代劳或停下来等。
+
+因此**报错里一旦四个事件齐全，就是没匹配到任何 provider**，与 provider 内部字段写错无关。
+`DeferExecuteTool` 代理路径同样依赖该前缀：还原内层名后重新过 provider 匹配，前缀写死会让
+provider 失效而报错信息看起来像字段问题。
+
+历史：2026-09-10 记录时 server key 为 `ue5`；当前 `~/.workbuddy/mcp.json` 为 `ue-editor`，
+glob 未同步，2026-10-23 暴露。
+
+**为什么 MCP provider 不声明 `pre_write`**：统一入口是 `call_tool`（`bEnableToolSearch` 默认
+`true`），载荷是 `{toolset_name, tool_name, arguments}`，内层字段还会被 `StandardizeCase` 转
+camelCase，且不同 toolset 的路径参数名不统一（C++ toolset 是 `assetPath`，Python toolset 是
+`asset_path`）。单一 `path_field` 覆盖不了全部写资产工具，声明 `exact` 只会制造**永不命中的
+虚假精确**。因此 provider 只声明 `pre_tool`（`partial`），MCP 写入走 `pre_tool` 放行，不做
+路径级审计。
+
+**已知覆盖缺口（不得描述成已强制）**：`project.asset.uasset-editor-capability` 与
+`project.asset.umap-editor-capability` 的 `when` 是 `pre_write`，没有 `pre_write` 证据就不会
+触发。它们的实际作用域是**非 MCP 入口**——用 `Write` / `Bash` / `cp` 直接改 `.uasset` 会被拒，
+因为普通写入工具不提供 `ue.asset.edit`。MCP 写入靠 UE 编辑器自身的资产权限加 `pre_tool` 放行，
+不是被能力门禁证明过的合规入口。
+
+### MCP 不可用时不得降级到 ticker（2026-10-25 用户裁定）
+
+`Content/Python` 的 ticker（`Saved/dmc_job.json`）和 `harness/scripts/run_editor_job.py`
+同样能在编辑器进程内改资产，`pre_write` 观测不到，**属于上文那个覆盖缺口**。
+缺口只说明"门禁没有覆盖这条路径"，**绝不构成授权**。
+
+编辑器资产操作（导入、改删、重命名、产出 `.uasset`）的正规入口是 MCP
+（`ue-editor`，capability `ue.asset.edit`）。MCP 不可用时：
+
+1. 先用 `ToolSearch` 确认 `mcp__ue-editor__*` 是否存在；
+2. 不存在 → 明确告知用户需在 WorkBuddy 连接器面板重新启用 `ue-editor`，然后**停下等**；
+   重连只能由用户操作，AI 没有这条通道（`ue-editor` 是 `~/.workbuddy/mcp.json`
+   的本地 server，不在 `list_installed_plugins` 的 connector 列表里）；
+3. 不得用 ticker / `run_editor_job.py` / 直接写盘 / 手工改 `.uasset` 代替，
+   **即使它能跑通**；
+4. 只有用户在本轮对话里明确授权"本次降级用 ticker"，才可以执行，
+   并且必须在回复里写明"这是已授权的降级"，不得静默。
+
+**不要把"能跑通"当成"被允许"。** 这条是认知约束，无法机械化：
+ticker 的写入发生在编辑器进程内，`pre_write` 类 evaluator 拿不到证据；
+把它描述成硬门禁就是虚假精确。
+
+2026-10-25 实例：DMC_V 资产导入全程走 ticker，虽然产物全部有效，
+但绕过了 `project.asset.uasset-editor-capability` 想守的入口约束，属违规执行。
 
 ## 架构约束（用户确认 2026-08-10）
 
